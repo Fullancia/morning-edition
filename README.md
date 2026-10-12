@@ -112,6 +112,13 @@ If you prefer to update by hand, run this in the folder that holds `docker-compo
 docker compose pull && docker compose up -d
 ```
 
+Things to know:
+
+- `docker compose down` and `docker compose logs` also need `WATCHTOWER_TOKEN` set in `.env`, because the compose file refuses to load without it.
+- If you built the image yourself with `docker compose up -d --build`, the next update replaces it with the published `latest` image from the registry.
+- A print that is still in progress when you update may be cut off, so wait for it to finish first.
+- Maintainers: a new GitHub Container Registry package starts out private. After the first publish, open the package's settings on GitHub and change its visibility to public, otherwise anonymous pulls (and the updater) fail.
+
 ### Switching an existing install to published images
 
 If you set Morning Edition up before images were published (it was built from this folder):

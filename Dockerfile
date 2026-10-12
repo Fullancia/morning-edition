@@ -1,7 +1,5 @@
 FROM python:3.12-slim
 
-ARG APP_VERSION=dev
-ARG APP_COMMIT=unknown
 LABEL org.opencontainers.image.source="https://github.com/rickgram/morning-edition" \
       org.opencontainers.image.title="Morning Edition" \
       org.opencontainers.image.description="A self-hosted personal newspaper, written with Claude and printed every morning." \
@@ -24,8 +22,10 @@ RUN pip install --no-cache-dir -c constraints.txt .
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-ENV DATA_DIR=/data \
-    APP_VERSION=${APP_VERSION} \
+ENV DATA_DIR=/data
+ARG APP_VERSION=dev
+ARG APP_COMMIT=unknown
+ENV APP_VERSION=${APP_VERSION} \
     APP_COMMIT=${APP_COMMIT}
 EXPOSE 8080
 ENTRYPOINT ["/entrypoint.sh"]

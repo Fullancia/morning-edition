@@ -99,3 +99,30 @@ def test_nightly_skips_without_a_configured_updater(client, tmp_path):
         note = nightly(client, bare)
     assert not route.called and "skipped" in note.lower() and "not set up" in note.lower()
     assert updates.load_status(tmp_path).auto_note == note
+
+
+def test_nightly_saves_the_requested_note_before_sending_the_update(client, cfg):
+    seen = {}
+
+    def answer(request):
+        seen["note"] = updates.load_status(cfg.data_dir).auto_note   # on disk before the app would be killed
+        return httpx.Response(200, json={})
+
+    with respx.mock() as router:
+        router.post(f"{URL}/v1/check").mock(return_value=httpx.Response(
+            200, json=body(container(update_available=True))))
+        router.post(f"{URL}/v1/update").mock(side_effect=answer)
+        router.get(host="api.github.com").mock(return_value=httpx.Response(200, json=COMMIT))
+        nightly(client, cfg)
+    assert seen["note"] == "Update requested."
+
+
+def test_nightly_overwrites_the_note_when_the_request_fails(client, cfg):
+    with respx.mock() as router:
+        router.post(f"{URL}/v1/check").mock(return_value=httpx.Response(
+            200, json=body(container(update_available=True))))
+        router.post(f"{URL}/v1/update").mock(side_effect=httpx.ConnectError("refused"))
+        router.get(host="api.github.com").mock(return_value=httpx.Response(200, json=COMMIT))
+        note = nightly(client, cfg)
+    assert note.startswith("The update request failed.")
+    assert updates.load_status(cfg.data_dir).auto_note == note

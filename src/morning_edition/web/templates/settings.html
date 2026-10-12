@@ -75,7 +75,7 @@
   {% if upd.status.auto_note %}<p class="muted">Last overnight run{% if upd.auto %} ({{ upd.auto }}){% endif %}: {{ upd.status.auto_note }}</p>{% endif %}
   <div class="row">
     <button type="submit" form="updates-check">Check for updates</button>
-    <button type="submit" form="updates-apply" onclick="return confirm('Update now? The dashboard restarts and is unavailable for about a minute.');">Update now</button>
+    <button type="submit" form="updates-apply" onclick="return confirm('Update now? The dashboard restarts and is unavailable for about a minute. A print still in progress may be cut off.');">Update now</button>
   </div>
   <p class="muted">Updating downloads the newest version and restarts the dashboard for about a minute. An edition that is building blocks it.</p>
   <label class="check"><input type="checkbox" name="auto_update"{% if s.auto_update %} checked{% endif %}> Update automatically overnight</label>

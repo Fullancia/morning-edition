@@ -218,5 +218,7 @@ def nightly_update(client: httpx.Client, cfg: AppConfig, s: Settings, build_runn
         return finish(f"The check failed, so no update was requested. {status.check_error}")
     if status.check_result != "update_available":
         return finish("Up to date.")
+    # A successful update kills this process mid-request, so the success note is saved first.
+    finish("Update requested.")
     result = request_update(client, cfg.watchtower_url, cfg.watchtower_token, cfg.app_image, cfg.data_dir, now)
-    return finish("Update requested." if result.started else f"The update request failed. {result.error}")
+    return "Update requested." if result.started else finish(f"The update request failed. {result.error}")

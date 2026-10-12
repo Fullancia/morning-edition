@@ -5,4 +5,16 @@
 <h1>Updating</h1>
 <p>Updating. The dashboard restarts in about a minute.</p>
 <p class="muted">This page reloads on its own. If the dashboard is not back yet, wait a moment and refresh.</p>
+<script>
+  // Watch for the restarted dashboard and go back to it as soon as it answers; the 45 second
+  // refresh in the head is the fallback.
+  (function () {
+    function poll() {
+      fetch('/login', { cache: 'no-store' }).then(function (r) {
+        if (r.status === 200) { window.location.href = '/'; }
+      }).catch(function () {});
+    }
+    setTimeout(function () { setInterval(poll, 3000); }, 10000);
+  })();
+</script>
 {% endblock %}

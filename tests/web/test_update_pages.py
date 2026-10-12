@@ -210,3 +210,17 @@ def test_the_nightly_job_is_scheduled_at_startup_when_saved_on(tmp_path):
     with TestClient(app):
         job = app.state.scheduler.get_job(scheduler.UPDATE_JOB_ID)
         assert job is not None and job.id == scheduler.UPDATE_JOB_ID
+
+
+def test_the_updating_page_polls_for_the_restarted_dashboard_and_keeps_the_refresh_fallback(wired, network):
+    app, client = wired
+    network.post(f"{URL}/v1/update").mock(return_value=httpx.Response(200, json={}))
+    page = client.post("/updates/apply").text
+    app.state.last_thread.join(timeout=5)
+    assert '<meta http-equiv="refresh" content="45;url=/">' in page
+    assert "fetch('/login'" in page and "3000" in page and "10000" in page and "window.location.href = '/'" in page
+
+
+def test_the_update_confirm_mentions_a_print_in_progress(wired):
+    _, client = wired
+    assert "A print still in progress may be cut off." in client.get("/settings").text
