@@ -1,5 +1,6 @@
 services:
   morning-edition:
+    image: ghcr.io/rickgram/morning-edition:latest
     build: .
     init: true
     restart: unless-stopped
@@ -8,5 +9,24 @@ services:
     env_file: .env
     environment:
       TZ: ${TZ:-UTC}
+      WATCHTOWER_URL: http://watchtower:8080
+      WATCHTOWER_TOKEN: ${WATCHTOWER_TOKEN}
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
     volumes:
       - ./data:/data
+
+  # Updates the app when the dashboard (or its overnight schedule) asks. It has no schedule of its
+  # own, only touches containers labeled above, and its API is reachable only on this compose
+  # network (no ports are published) and needs the token.
+  watchtower:
+    image: nickfedor/watchtower:1.23.0
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_HTTP_API_ENDPOINTS: update,check
+      WATCHTOWER_HTTP_API_TOKEN: ${WATCHTOWER_TOKEN:?set WATCHTOWER_TOKEN in .env}
+      WATCHTOWER_CLEANUP: "true"
+      TZ: ${TZ:-UTC}
