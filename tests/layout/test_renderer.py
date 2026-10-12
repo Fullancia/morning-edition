@@ -246,9 +246,9 @@ def test_weather_band_pushes_page_two_columns_below_it(base):
 
 def test_weather_band_is_in_the_front_page_index(base):
     r = renderer.render_edition(expanded_input(base))
-    assert "<b>Weather</b> &middot; Page 2" in r.html
+    assert "<b>Weather</b> 2" in r.html
     off = renderer.render_edition(dataclasses.replace(expanded_input(base), settings=base.settings))
-    assert "<b>Weather</b> &middot; Page 2" not in off.html
+    assert "<b>Weather</b> 2" not in off.html
 
 
 def test_expanded_off_changes_nothing(base):
@@ -547,3 +547,88 @@ def test_band_details_are_in_the_approved_order(base):
     (days,) = [e for e in extents(doc, {"wx-days"}) if e.page == 1]
     (moon_text,) = [e for e in extents(doc, {"wx-moon-text"}) if e.page == 1]
     assert moon_text.bottom <= days.top + 0.005, "the moon text runs into the forecast rule"
+
+
+BOTTOM_CLASSES = {"ragged", "cols", "brief", "story-header", "vrule"}
+
+
+def strip_input(base, **over):
+    wx = Weather(current_temp=58, today=forecast(12), wind="Wind NW 8 mph",
+                 outlook=[forecast(13, "Showers"), forecast(14, "Sunny"), forecast(15, "Cloudy")])
+    events = [Event(label=f"{9 + i}:00 am", title=f"Calendar entry number {i}", all_day=False, sort_minute=540 + i)
+              for i in range(5)]
+    return dataclasses.replace(base, weather=wx, events=events, **over)
+
+
+def test_index_strip_sits_below_every_bottom_region_on_page_one(base):
+    r = renderer.render_edition(strip_input(base))
+    doc = assert_fold_clear(r.html)
+    (strip,) = [e for e in extents(doc, {"index-strip"}) if e.page == 0]
+    assert abs(strip.top - g.INDEX_STRIP_Y) < 0.01 and abs((strip.bottom - strip.top) - g.INDEX_STRIP_H) < 0.01
+    bottom = [e for e in extents(doc, BOTTOM_CLASSES) if e.page == 0 and e.top > g.FOLD]
+    assert {e.cls for e in bottom} >= {"ragged", "cols", "brief", "story-header"}
+    assert all(e.bottom <= strip.top + 0.001 for e in bottom)
+    regions = [e for e in bottom if e.cls in {"ragged", "vrule"}]
+    assert regions and all(e.bottom <= g.FRONT_BOTTOM_Y + g.front_bottom_h(True) + 0.001 for e in regions)
+    assert strip.bottom <= g.PAGE_H - g.MARGIN_Y + 0.001
+
+
+def test_index_strip_lists_every_entry_in_order_on_one_line(base):
+    r = renderer.render_edition(strip_input(base))
+    doc = render_document(r.html)
+    (line,) = [e for e in extents(doc, {"index-line"}) if e.page == 0]
+    assert line.bottom - line.top <= 12 / 72 + 0.001      # one line of 10pt leading, never wrapped
+    items = [e for e in extents(doc, {"idx-item", "idx-label"}) if e.page == 0]
+    assert all(e.right <= g.MARGIN_X + g.CONTENT_W + 0.001 for e in items)
+    assert len({round(e.top, 2) for e in items}) == 1
+    assert [e.text.upper() for e in items][0] == "INSIDE"
+    names = [" ".join(e.text.split()[:-1]) for e in items[1:]]
+    assert names == SECTIONS + ["Good News", "Sudoku"]
+    assert "<b>Good News</b> 6" in r.html and "<b>Sudoku</b> 6" in r.html
+    for name in SECTIONS:
+        assert f"<b>{name}</b> " in r.html
+
+
+def test_sidebar_no_longer_holds_the_index(base):
+    r = renderer.render_edition(strip_input(base))
+    side = r.html[r.html.index('class="region side"'):r.html.index('class="region rule-top"')]
+    assert "Inside" not in side and "index-row" not in side
+    assert "Your Day" in side and "Outlook" in side
+
+
+def test_five_events_and_three_day_outlook_both_fit_on_page_one(base):
+    r = renderer.render_edition(strip_input(base))
+    doc = render_document(r.html)
+    assert len([e for e in extents(doc, {"cal-row"}) if e.page == 0]) == 5
+    rows = [e for e in extents(doc, {"outlook-row"}) if e.page == 0]
+    assert len(rows) == 3 and all(e.bottom <= g.FOLD for e in rows)
+
+
+def test_a_long_index_steps_the_strip_font_down_and_stays_one_line(base):
+    names = ["Neighborhood Affairs", "International Affairs", "Science and Tech", "Culture"]
+    primary = [piece(i, "story", names[i % 4], n=3) for i in range(3, 18)]
+    settings = base.settings.model_copy(update={"sections": names, "target_sheets": 3, "max_sheets": 3})
+    r = renderer.render_edition(strip_input(base, settings=settings, primary=primary))
+    doc = render_document(r.html)
+    (line,) = [e for e in extents(doc, {"index-line"}) if e.page == 0]
+    assert line.bottom - line.top <= 12 / 72 + 0.001
+    size = float(re.search(r'class="index-line" style="font-size: ([\d.]+)pt"', r.html).group(1))
+    assert size in renderer.INDEX_STRIP_SIZES and size < renderer.INDEX_STRIP_SIZES[0]
+    items = [e for e in extents(doc, {"idx-item"}) if e.page == 0]
+    assert len(items) >= 5 and all(e.right <= g.MARGIN_X + g.CONTENT_W + 0.001 for e in items)
+
+
+def test_a_short_index_keeps_the_full_strip_font(base):
+    r = renderer.render_edition(strip_input(base))
+    assert 'class="index-line" style="font-size: 7.5pt"' in r.html
+
+
+def test_no_index_means_no_strip_and_full_height_bottom_regions(base):
+    quiet = dataclasses.replace(base, good_news=None, primary=[], reserves=[], puzzle=None, lead=piece(1, "lead", n=14))
+    settings = base.settings.model_copy(update={"target_sheets": 1, "max_sheets": 1})
+    r = renderer.render_edition(dataclasses.replace(quiet, settings=settings))
+    doc = render_document(r.html)
+    assert "index-strip" not in r.html.split("</style>")[1]
+    assert not extents(doc, {"index-strip"})
+    (cont,) = [e for e in extents(doc, {"ragged"}) if e.page == 0 and e.top > g.FOLD]
+    assert abs(cont.bottom - (g.PAGE_H - g.MARGIN_Y)) < 0.01

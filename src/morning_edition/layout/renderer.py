@@ -23,6 +23,7 @@ MASTHEAD_WEIGHTS = {"Pirata One": 400, "Manufacturing Consent": 400, "Grenze Got
                     "Playfair Display": 900}
 LEAD_SIZES = (28, 24, 20)
 NAMEPLATE_SIZES = (60, 54, 48, 42, 36, 30, 24, 20, 16, 12)
+INDEX_STRIP_SIZES = (7.5, 7, 6.5)
 EAR_TEMP_SIZES = (15, 14, 13, 12, 11, 10, 9)
 EAR_ICON_W = 0.3 + 3 / 72      # the weather icon and the gap after it, inside the ear (.ear-temp)
 MAX_EVENTS = 7
@@ -94,9 +95,12 @@ def _measure(items: list[tuple[str, float, str, object]]) -> dict[str, float]:
     return heights(_env.get_template("measure.html.j2").render(items=items, **_common()))
 
 
-def _fit_size(text: str, font: str, weight: int, sizes: tuple[int, ...], avail: float) -> int:
-    """The largest size (pt) at which text sits on one line in avail inches; the smallest if none does."""
-    probes = [{"key": f"s{sz}", "text": text, "font": font, "weight": weight, "size": sz} for sz in sizes]
+def _fit_size(text: str, font: str, weight: int, sizes: tuple[float, ...], avail: float,
+              index: list[tuple[str, int]] | None = None) -> float:
+    """The largest size (pt) at which text sits on one line in avail inches; the smallest if none does.
+    With index, the probe is the front-page index strip's own markup instead of plain text."""
+    probes = [{"key": f"s{sz}", "text": text, "font": font, "weight": weight, "size": sz,
+               **({"index": index} if index is not None else {})} for sz in sizes]
     html = _env.get_template("measure.html.j2").render(
         items=[(p["key"], 8.0, "text_probe", p) for p in probes], **_common())
     wide = widths(html)
@@ -122,7 +126,8 @@ def _paragraph_heights(paragraphs: list[str], width: float, macro: str = "para")
     return [hs[f"p{i}"] for i in range(len(paragraphs))]
 
 
-def _fit_lead(lead: Piece, image: Path | None, work_dir: Path, gamma: float) -> dict:
+def _fit_lead(lead: Piece, image: Path | None, work_dir: Path, gamma: float,
+              bottom_h: float = g.FRONT_BOTTOM_H) -> dict:
     head, head_h = None, 0.0
     for size in LEAD_SIZES:
         head = _pd(lead, size=size)
@@ -148,7 +153,7 @@ def _fit_lead(lead: Piece, image: Path | None, work_dir: Path, gamma: float) -> 
     rest = lead.paragraphs[k:]
     cont: list[str] = []
     if rest:
-        k2 = fit_count(_paragraph_heights(rest, g.CONT_TEXT_W, "para_ragged"), g.FRONT_BOTTOM_H - g.KICKER_H,
+        k2 = fit_count(_paragraph_heights(rest, g.CONT_TEXT_W, "para_ragged"), bottom_h - g.KICKER_H,
                        gap=RAGGED_GAP)
         cont = rest[:k2]
     return {"head": head, "text_h": round(text_h, 3), "ncols": ncols, "photo": photo,
@@ -164,22 +169,22 @@ def _fit_columns(p: Piece, header_macro: str, header_w: float, col_w: float, nco
     return {"head": head, "paras": p.paragraphs[:k], "text_h": round(text_h, 3)}
 
 
-def _fit_front_briefs(briefs: list[Piece]) -> list[Piece]:
+def _fit_front_briefs(briefs: list[Piece], bottom_h: float = g.FRONT_BOTTOM_H) -> list[Piece]:
     if not briefs:
         return []
     hs = _measure([(f"b{i}", g.BRIEFS_TEXT_W, "brief", _pd(p)) for i, p in enumerate(briefs)])
     cols, _ = pack([Block(str(i), hs[f"b{i}"]) for i in range(len(briefs))],
-                   g.FRONT_BOTTOM_H - g.KICKER_H, 1, g.GAP)
+                   bottom_h - g.KICKER_H, 1, g.GAP)
     chosen = {int(k) for c in cols for k in c.keys}
     return [p for i, p in enumerate(briefs) if i in chosen]
 
 
-def _fit_side(events: list[Event], weather: Weather | None, index: list[tuple[str, int]]) -> dict:
+def _fit_side(events: list[Event], weather: Weather | None) -> dict:
     """Trim the front-page sidebar until it fits: outlook days first, then events."""
     outlook = list(weather.outlook[:MAX_OUTLOOK]) if weather else []
     n_events = min(len(events), MAX_EVENTS)
     while True:
-        side = {"events": events[:n_events], "more": len(events) - n_events, "index": index,
+        side = {"events": events[:n_events], "more": len(events) - n_events,
                 "outlook": outlook, "deg": _deg(weather)}
         if _measure([("side", g.SIDE_W - 0.15, "side", side)])["side"] <= g.FRONT_TOP_H - 0.02:
             return side
@@ -260,15 +265,18 @@ def _date_label(day: date) -> str:
     return f"{day:%A}, {day:%B} {day.day}, {day.year}"
 
 
-def render_edition(inp: EditionInput) -> RenderResult:
+def _front_plan(inp: EditionInput, strip: bool) -> dict:
+    """Everything the front page and the pages behind it depend on, fitted with or without the index strip."""
     s = inp.settings
-    lead_view = _fit_lead(inp.lead, inp.lead_image, inp.work_dir, s.halftone_gamma) if inp.lead else None
+    bottom_h = g.front_bottom_h(strip)
+    lead_view = (_fit_lead(inp.lead, inp.lead_image, inp.work_dir, s.halftone_gamma, bottom_h)
+                 if inp.lead else None)
 
     stories = [p for p in inp.primary if p.kind != "brief"]
     story2_piece = stories[0] if stories else None
-    story2 = (_fit_columns(story2_piece, "story_header", g.STORY2_W, g.STORY2_COL_W, 2, g.FRONT_BOTTOM_H)
+    story2 = (_fit_columns(story2_piece, "story_header", g.STORY2_W, g.STORY2_COL_W, 2, bottom_h)
               if story2_piece else None)
-    front_briefs = _fit_front_briefs([p for p in inp.primary if p.kind == "brief"][:6])
+    front_briefs = _fit_front_briefs([p for p in inp.primary if p.kind == "brief"][:6], bottom_h)
     used = {p.key for p in front_briefs} | ({story2_piece.key} if story2_piece else set())
     pool = [p for p in inp.primary if p.key not in used]
 
@@ -285,8 +293,26 @@ def render_edition(inp: EditionInput) -> RenderResult:
     placed += [p for p in pool + inp.reserves if p.key in inside_keys]
     placed += [inp.good_news] if inp.good_news else []
 
-    puzzle = inp.puzzle
-    index = _index(s.sections, inside_pages, good is not None, back_page, puzzle, weather_band)
+    index = _index(s.sections, inside_pages, good is not None, back_page, inp.puzzle, weather_band)
+    return {"bottom_h": bottom_h, "lead_view": lead_view, "story2": story2, "front_briefs": front_briefs,
+            "inside_pages": inside_pages, "inside_keys": inside_keys, "dropped": dropped, "good": good,
+            "back_page": back_page, "placed": placed, "index": index, "weather_band": weather_band}
+
+
+def render_edition(inp: EditionInput) -> RenderResult:
+    s = inp.settings
+    # the index strip costs the below-fold regions some height, so fit with it first and give the
+    # height back only when there turns out to be no index to print
+    plan = _front_plan(inp, True)
+    if not plan["index"]:
+        bare = _front_plan(inp, False)
+        if not bare["index"]:
+            plan = bare
+    lead_view, story2, front_briefs = plan["lead_view"], plan["story2"], plan["front_briefs"]
+    inside_pages, inside_keys, dropped = plan["inside_pages"], plan["inside_keys"], plan["dropped"]
+    good, back_page, placed, index = plan["good"], plan["back_page"], plan["placed"], plan["index"]
+    weather_band, puzzle = plan["weather_band"], inp.puzzle
+    index_size = _fit_size("", "Libre Franklin", 500, INDEX_STRIP_SIZES, g.CONTENT_W, index) if index else 0
     ear_temp, ear_temp_size = "", EAR_TEMP_SIZES[0]
     if inp.weather:
         deg = _deg(inp.weather)
@@ -298,7 +324,8 @@ def render_edition(inp: EditionInput) -> RenderResult:
         nameplate_size=_nameplate_size(s, g.CONTENT_W - 2 * g.EAR_W - 2 * g.NAMEPLATE_GAP),
         ear_temp=ear_temp, ear_temp_size=ear_temp_size,
         date_label=_date_label(inp.day), number=inp.number, weather=inp.weather, deg=_deg(inp.weather),
-        side=_fit_side(inp.events, inp.weather, index),
+        side=_fit_side(inp.events, inp.weather),
+        bottom_h=plan["bottom_h"], index=index, index_size=index_size,
         lead=lead_view, story2=story2, front_briefs=[_pd(p) for p in front_briefs],
         inside_pages=inside_pages,
         good=good, otd=inp.on_this_day, puzzle=puzzle,

@@ -85,24 +85,30 @@
   <div class="region rule-top" style="left: {{ g.MARGIN_X }}in; top: {{ g.FOLD + 0.03 }}in; width: {{ g.CONTENT_W }}in; height: 0"></div>
 
   {% if lead and lead.cont %}
-  <div class="region ragged" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.CONT_TEXT_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+  <div class="region ragged" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.CONT_TEXT_W }}in; height: {{ bottom_h }}in">
     <div class="kicker">Continued from above</div>
     {% for t in lead.cont %}<p>{{ t }}</p>{% endfor %}
   </div>
-  <div class="vrule" style="left: {{ g.MARGIN_X + g.CONT_W + g.REGION_GAP / 2 }}in; top: {{ g.FRONT_BOTTOM_Y }}in; height: {{ g.FRONT_BOTTOM_H }}in"></div>
+  <div class="vrule" style="left: {{ g.MARGIN_X + g.CONT_W + g.REGION_GAP / 2 }}in; top: {{ g.FRONT_BOTTOM_Y }}in; height: {{ bottom_h }}in"></div>
   {% endif %}
 
   {% if story2 %}
-  <div class="region" style="left: {{ g.STORY2_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.STORY2_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+  <div class="region" style="left: {{ g.STORY2_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.STORY2_W }}in; height: {{ bottom_h }}in">
     {{ m.story_header(story2.head) }}
     <div class="cols" style="column-count: 2; height: {{ story2.text_h }}in">{% for t in story2.paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>
   </div>
   {% endif %}
 
   {% if front_briefs %}
-  <div class="region ragged rule-left" style="left: {{ g.BRIEFS_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.BRIEFS_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+  <div class="region ragged rule-left" style="left: {{ g.BRIEFS_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.BRIEFS_W }}in; height: {{ bottom_h }}in">
     <div class="label">Briefs</div>
     <div class="stack">{% for p in front_briefs %}{{ m.brief(p) }}{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  {% if index %}
+  <div class="region index-strip" style="left: {{ g.MARGIN_X }}in; top: {{ g.INDEX_STRIP_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.INDEX_STRIP_H }}in">
+    <div class="index-line" style="font-size: {{ index_size }}pt">{{ m.index_items(index) }}</div>
   </div>
   {% endif %}
 </section>

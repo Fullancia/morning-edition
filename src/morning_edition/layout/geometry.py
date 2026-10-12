@@ -29,6 +29,9 @@ LEAD_TEXT_W_PHOTO = (LEAD_W - PHOTO_W - 2 * GUTTER) / 2
 LEAD_TEXT_W_NOPHOTO = (LEAD_W - 2 * GUTTER) / 3
 FRONT_BOTTOM_Y = FOLD + 0.12
 FRONT_BOTTOM_H = PAGE_H - MARGIN_Y - FRONT_BOTTOM_Y
+INDEX_STRIP_H = 0.24                       # the one-line "Inside" index along the foot of the front page
+INDEX_STRIP_Y = PAGE_H - MARGIN_Y - INDEX_STRIP_H
+INDEX_STRIP_GAP = 0.08                     # air between the below-fold regions and the strip's rule
 CONT_W = 1.75
 CONT_TEXT_W = CONT_W - GUTTER
 BRIEFS_W = 1.75
@@ -56,6 +59,11 @@ XWORD_CELL = 0.28
 SUDOKU_CELL = 0.27
 ANSWER_CELL = 0.11
 INSIDE_FOLD_AT = FOLD - INSIDE_Y           # fold offset within an inside column
+
+
+def front_bottom_h(has_strip: bool) -> float:
+    """Height of the below-fold front-page regions: full height, or shortened to leave room for the index strip."""
+    return FRONT_BOTTOM_H - (INDEX_STRIP_H + INDEX_STRIP_GAP if has_strip else 0.0)
 
 
 def inside_col_x(i: int) -> float:
