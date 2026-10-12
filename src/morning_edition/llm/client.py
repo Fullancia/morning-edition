@@ -85,6 +85,7 @@ class LLM:
     def _research(self, system: str, user: str, max_searches: int, max_tokens: int) -> str:
         messages: list[dict] = [{"role": "user", "content": user}]
         paused: list = []  # everything Claude produced across pauses, resent as one assistant turn
+        texts: list[str] = []
         for _ in range(MAX_CONTINUATIONS + 1):
             try:
                 resp = self.client.beta.messages.create(
@@ -100,8 +101,9 @@ class LLM:
             except anthropic.APIError as exc:
                 raise LLMError(f"Claude API error: {exc}") from exc
             self._check_stop(resp)
+            texts.append("".join(b.text for b in resp.content if b.type == "text"))
             if resp.stop_reason != "pause_turn":
-                text = "".join(b.text for b in resp.content if b.type == "text")
+                text = "\n".join(t for t in texts if t)
                 if not text.strip():
                     raise LLMError("Claude returned no text block")
                 return text

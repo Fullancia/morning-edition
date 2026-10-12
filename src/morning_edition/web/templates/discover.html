@@ -3,6 +3,7 @@
 {% block title %}Find feeds{% endblock %}
 {% block body %}
 <h1>Find feeds for me</h1>
+{% if busy %}<p class="ok">A new search is running; reload when it finishes.</p>{% endif %}
 {% macro search_button(label) %}<form method="post" action="/feeds/discover"><button>{{ label }}</button></form>{% endmacro %}
 
 {% if not has_key %}
@@ -15,7 +16,7 @@
   {% if groups %}
   <p class="muted">Found {{ state.results | length }} feed{{ "" if state.results | length == 1 else "s" }}. Every one was fetched and has stories from the last week. Pick the ones you want and change a section if it fits better elsewhere.</p>
   <form method="post" action="/feeds/discover/add" class="found">
-    <input type="hidden" name="run" value="{{ state.started_at }}">
+    <input type="hidden" name="run" value="{{ state.run_id }}">
     {% for group in groups %}
     <h2>{{ group.name }}</h2>
     <ul class="found-list">

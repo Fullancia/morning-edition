@@ -12,6 +12,7 @@ from morning_edition.llm.client import LLMError
 from morning_edition.pipeline import Services
 from morning_edition.sources import discover as discover_mod
 from morning_edition.sources.discover import DiscoveredFeed
+from morning_edition.sources.http import PublicOnlyTransport
 from morning_edition.web.app import create_app
 from .conftest import FakePrinter
 
@@ -38,7 +39,7 @@ def keyed(tmp_path):
 
 def write_state(app, **state):
     base = {"status": "done", "started_at": "2026-10-12T09:00:00+00:00",
-            "finished_at": "2026-10-12T09:01:00+00:00", "error": None, "results": []}
+            "run_id": "run1", "finished_at": "2026-10-12T09:01:00+00:00", "error": None, "results": []}
     merged = {**base, **state}
     merged["results"] = [r.model_dump() for r in merged["results"]]
     (app.state.config.data_dir / "discovery.json").write_text(json.dumps(merged))
@@ -79,6 +80,8 @@ def test_search_runs_in_the_background_and_shows_progress_then_results(keyed, mo
     gate, calls = threading.Event(), []
 
     def fake_discover(llm, http, interests, home, sections, existing_feeds, now):
+        assert http is not app.state.services.http  # found sites get their own public-only client
+        assert isinstance(http._transport, PublicOnlyTransport)
         calls.append((interests, home, sections, [f.url for f in existing_feeds]))
         gate.wait(10)
         return [found()]
@@ -187,7 +190,7 @@ def test_adding_selected_feeds_uses_the_chosen_sections_and_skips_duplicates(key
     conn = db.connect(app.state.db_path)
     db.add_feed(conn, "https://www.dup.example.com/feed/", "World")
     r = client.post("/feeds/discover/add", follow_redirects=False, data={
-        "run": "2026-10-12T09:00:00+00:00", "pick": ["0", "1", "3"],
+        "run": "run1", "pick": ["0", "1", "3"],
         "section_0": "Tech", "section_1": "Good News", "section_2": "Local", "section_3": "Local"})
     assert r.status_code == 303
     assert r.headers["location"].startswith("/settings") and r.headers["location"].endswith("#feeds")
@@ -204,7 +207,7 @@ def test_adding_ignores_bad_sections_indexes_and_a_replaced_result_set(keyed):
     conn = db.connect(app.state.db_path)
     client.post("/feeds/discover/add", data={"run": "old-run", "pick": ["0"]})
     assert db.list_feeds(conn) == []
-    client.post("/feeds/discover/add", data={"run": "2026-10-12T09:00:00+00:00",
+    client.post("/feeds/discover/add", data={"run": "run1",
                                               "pick": ["0", "9", "x"], "section_0": "Sports"})
     (feed,) = db.list_feeds(conn)
     assert feed.section == "World"  # an unknown section falls back to Claude's suggestion
@@ -220,3 +223,39 @@ def test_today_links_to_the_finder_only_when_there_are_no_feeds(authed, app):
     assert 'href="/feeds/discover"' in authed.get("/").text
     db.add_feed(db.connect(app.state.db_path), "https://example.com/feed", "Local")
     assert 'href="/feeds/discover"' not in authed.get("/").text
+
+
+def test_unicode_digits_never_crash_the_added_message_or_the_pick_list(keyed):
+    app, client = keyed
+    assert client.get("/settings?added=%C2%B2").status_code == 200
+    assert client.get("/settings?added=" + "9" * 5000).status_code == 200
+    write_state(app, results=[found("One", "https://one.example.com/feed", "World")])
+    r = client.post("/feeds/discover/add", data={"run": "run1", "pick": ["\u00b2", "\u0663", "0"]},
+                    follow_redirects=False)
+    assert r.status_code == 303
+    assert [f.url for f in db.list_feeds(db.connect(app.state.db_path))] == ["https://one.example.com/feed"]
+
+
+def test_each_search_gets_a_random_run_id(keyed, monkeypatch):
+    app, client = keyed
+    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: [found()])
+    ids = []
+    for _ in range(2):
+        client.post("/feeds/discover")
+        app.state.last_thread.join(timeout=10)
+        ids.append(read_state(app)["run_id"])
+    assert len(set(ids)) == 2 and all(len(i) == 32 and int(i, 16) >= 0 for i in ids)
+    assert f'name="run" value="{ids[1]}"' in client.get("/feeds/discover").text
+
+
+def test_adding_while_a_new_search_runs_says_so_and_adds_nothing(keyed):
+    app, client = keyed
+    write_state(app, results=[found("One", "https://one.example.com/feed", "World")])
+    app.state.discover_lock.acquire()
+    try:
+        r = client.post("/feeds/discover/add", data={"run": "run1", "pick": ["0"]}, follow_redirects=False)
+        assert r.headers["location"] == "/feeds/discover?busy=1"
+        assert "A new search is running; reload when it finishes." in client.get(r.headers["location"]).text
+    finally:
+        app.state.discover_lock.release()
+    assert db.list_feeds(db.connect(app.state.db_path)) == []

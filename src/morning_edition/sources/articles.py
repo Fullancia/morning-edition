@@ -9,6 +9,7 @@ from PIL import Image
 from PIL.Image import UnidentifiedImageError, DecompressionBombError
 
 from .feeds import USER_AGENT
+from .http import MAX_IMAGE_BYTES, get_capped
 
 MIN_WORDS = 150
 MAX_WORDS_FOR_LLM = 2500
@@ -39,7 +40,7 @@ def extract_article(html_text: str, url: str) -> Article | None:
 
 def fetch_article(client: httpx.Client, url: str) -> Article | None:
     try:
-        resp = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True)
+        resp = get_capped(client, url, headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True)
         resp.raise_for_status()
     except httpx.HTTPError:
         return None
@@ -50,7 +51,8 @@ def fetch_article(client: httpx.Client, url: str) -> Article | None:
 
 def download_image(client: httpx.Client, url: str, dest: Path, min_width: int = 600) -> Path | None:
     try:
-        resp = client.get(url, headers={"User-Agent": USER_AGENT}, timeout=20, follow_redirects=True)
+        resp = get_capped(client, url, max_bytes=MAX_IMAGE_BYTES, headers={"User-Agent": USER_AGENT},
+                          timeout=20, follow_redirects=True)
         resp.raise_for_status()
         with Image.open(BytesIO(resp.content)) as img:
             if img.width < min_width:

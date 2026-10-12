@@ -52,3 +52,13 @@ def test_download_image_enforces_min_width(tmp_path):
         assert articles.download_image(client, "https://example.com/big.png", tmp_path / "a.img") == tmp_path / "a.img"
         assert articles.download_image(client, "https://example.com/small.png", tmp_path / "b.img") is None
         assert articles.download_image(client, "https://example.com/junk.png", tmp_path / "c.img") is None
+
+
+@respx.mock
+def test_fetch_article_gives_up_on_a_page_over_the_size_cap():
+    respx.get("https://example.com/huge").mock(return_value=httpx.Response(
+        200, html=PAGE + "<!-- " + "x" * 2_100_000 + " -->"))
+    respx.get("https://example.com/ok").mock(return_value=httpx.Response(200, html=PAGE))
+    with httpx.Client() as client:
+        assert articles.fetch_article(client, "https://example.com/huge") is None
+        assert articles.fetch_article(client, "https://example.com/ok") is not None

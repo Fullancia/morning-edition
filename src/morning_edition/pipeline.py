@@ -20,6 +20,7 @@ from .printing import PrintError
 from .puzzles import crossword, sudoku
 from .settings import Settings
 from .sources import articles, calendar, feeds, onthisday, weather
+from .sources.http import public_client
 
 BUILD_LOCK = threading.Lock()
 
@@ -35,11 +36,12 @@ def _claude_warning(llm, since: int = 0) -> str | None:
 
 @dataclass
 class Services:
-    http: httpx.Client
+    http: httpx.Client  # feeds, weather, iCal: may reach the local network
     llm_factory: Callable[[Settings], LLM | None]
     printer: object  # anything with ensure_queue(address) and print_pdf(path) -> job id
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
     rng: random.Random = field(default_factory=random.Random)
+    public_http: httpx.Client = field(default_factory=public_client)  # article pages and images: public sites only
 
 
 @dataclass
@@ -149,7 +151,7 @@ def _produce(conn, s: Settings, tz: ZoneInfo, now: datetime, day, ed, data_dir: 
         def write_one(job):
             role, item, kind, section = job
             try:
-                art = None if item.headlines_only else articles.fetch_article(services.http, item.url)
+                art = None if item.headlines_only else articles.fetch_article(services.public_http, item.url)
                 piece = editor.condense(llm, item, art.text if art else None, kind)
                 if section:  # the editor moved this story out of its feed's section
                     piece = piece.model_copy(update={"section": section})
@@ -167,7 +169,7 @@ def _produce(conn, s: Settings, tz: ZoneInfo, now: datetime, day, ed, data_dir: 
             if role == "lead":
                 lead = piece
                 if art and art.image_url:
-                    lead_image = articles.download_image(services.http, art.image_url, work / "lead-source.img")
+                    lead_image = articles.download_image(services.public_http, art.image_url, work / "lead-source.img")
             elif role == "good":
                 good = piece
             elif role == "primary":

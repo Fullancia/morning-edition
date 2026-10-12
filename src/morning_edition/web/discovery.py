@@ -12,6 +12,14 @@ STATE_FILE = "discovery.json"
 INTERRUPTED = "The last search was interrupted. Search again."
 
 
+def parse_index(raw) -> int | None:
+    """A non-negative integer from ASCII digits only ("²" and other Unicode digits are not numbers here)."""
+    text = str(raw)
+    if not (text.isascii() and text.isdigit()) or len(text) > 9:
+        return None
+    return int(text)
+
+
 def load_state(data_dir: Path, searching: bool) -> dict | None:
     """The saved state with `results` parsed into DiscoveredFeed. A search marked running that
     nothing is working on any more (the app restarted) shows as an error."""
@@ -27,16 +35,16 @@ def load_state(data_dir: Path, searching: bool) -> dict | None:
             results.append(DiscoveredFeed.model_validate(item))
         except ValidationError:
             continue
-    state = {"status": raw["status"], "started_at": str(raw.get("started_at") or ""),
+    state = {"status": raw["status"], "started_at": str(raw.get("started_at") or ""), "run_id": str(raw.get("run_id") or ""),
              "finished_at": raw.get("finished_at"), "error": raw.get("error"), "results": results}
     if state["status"] == "running" and not searching:
         state.update(status="error", error=INTERRUPTED)
     return state
 
 
-def save_state(data_dir: Path, status: str, started_at: str, finished_at: str | None = None,
+def save_state(data_dir: Path, status: str, started_at: str, run_id: str, finished_at: str | None = None,
                error: str | None = None, results: list[DiscoveredFeed] | None = None) -> None:
-    payload = {"status": status, "started_at": started_at, "finished_at": finished_at, "error": error,
+    payload = {"status": status, "started_at": started_at, "run_id": run_id, "finished_at": finished_at, "error": error,
                "results": [r.model_dump() for r in results or []]}
     tmp = data_dir / (STATE_FILE + ".tmp")
     tmp.write_text(json.dumps(payload))

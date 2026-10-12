@@ -8,6 +8,7 @@ import time
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from itertools import count
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -31,6 +32,7 @@ from ..settings import GOOD_NEWS, MASTHEAD_FONTS, MODEL_CHOICES, CalendarLink, S
 from ..sources import discover as discover_mod
 from ..sources import feeds as feeds_mod
 from ..sources import weather
+from ..sources.http import public_client
 from . import discovery
 from .auth import check_password
 from .paper import is_web_url, todays_paper
@@ -220,8 +222,8 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         conn = db.connect(db_path)
         try:
             message = ""
-            if added.isdigit():
-                n = int(added)
+            n = discovery.parse_index(added)
+            if n is not None:
                 message = f"Added {n} feed{'' if n == 1 else 's'}." if n else "No new feeds were added."
             return settings_page(request, conn, message=message)
         finally:
@@ -345,7 +347,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         return RedirectResponse("/settings#feeds", status_code=303)
 
     @app.get("/feeds/discover", dependencies=[Depends(require_login)])
-    def discover_get(request: Request):
+    def discover_get(request: Request, busy: str = ""):
         conn = db.connect(db_path)
         try:
             s = db.load_settings(conn)
@@ -354,22 +356,25 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         state = discovery.load_state(config.data_dir, app.state.discover_lock.locked())
         valid = s.sections + [GOOD_NEWS]
         done = state is not None and state["status"] == "done"
-        return page(request, "discover.html", has_key=services.llm_factory(s) is not None, state=state,
+        return page(request, "discover.html", has_key=services.llm_factory(s) is not None, state=state, busy=bool(busy),
                     groups=discovery.group_by_section(state["results"], valid) if done else [],
                     sections=valid)
 
-    def run_discovery(llm, s: Settings, existing: list[db.Feed], started: str) -> None:
+    def run_discovery(llm, s: Settings, existing: list[db.Feed], started: str, run_id: str) -> None:
         """Background thread: search, verify, and save the outcome for the page to show."""
         data_dir = config.data_dir
         try:
-            found = discover_mod.discover(llm, services.http, s.interests, s.home.label or s.home.query,
-                                          s.sections, existing, services.now())
-            discovery.save_state(data_dir, "done", started, services.now().isoformat(), results=found)
+            # its own client: the sites come from web research, so they must never reach the local network
+            with public_client() as http:
+                found = discover_mod.discover(llm, http, s.interests, s.home.label or s.home.query,
+                                              s.sections, existing, services.now())
+            discovery.save_state(data_dir, "done", started, run_id, services.now().isoformat(), results=found)
         except LLMError as exc:
-            discovery.save_state(data_dir, "error", started, services.now().isoformat(), error=str(exc)[:300])
+            discovery.save_state(data_dir, "error", started, run_id, services.now().isoformat(),
+                                 error=str(exc)[:300])
         except Exception:  # noqa: BLE001 - the page shows a generic message; details go to the log
             logging.getLogger("morning_edition").exception("Feed search failed")
-            discovery.save_state(data_dir, "error", started, services.now().isoformat(),
+            discovery.save_state(data_dir, "error", started, run_id, services.now().isoformat(),
                                  error="The search failed. Check the logs for details.")
         finally:
             app.state.discover_lock.release()
@@ -386,8 +391,9 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         if llm is not None and app.state.discover_lock.acquire(blocking=False):
             try:
                 started = services.now().isoformat()
-                discovery.save_state(config.data_dir, "running", started)
-                app.state.start_thread(run_discovery, llm, s, existing, started)
+                run_id = uuid.uuid4().hex
+                discovery.save_state(config.data_dir, "running", started, run_id)
+                app.state.start_thread(run_discovery, llm, s, existing, started, run_id)
             except BaseException:
                 app.state.discover_lock.release()
                 raise
@@ -396,19 +402,21 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
     @app.post("/feeds/discover/add", dependencies=[Depends(require_login)])
     async def discover_add(request: Request):
         form = await request.form()
+        if app.state.discover_lock.locked():  # the results on screen may already be replaced
+            return RedirectResponse("/feeds/discover?busy=1", status_code=303)
         conn = db.connect(db_path)
         added = 0
         try:
             s = db.load_settings(conn)
             state = discovery.load_state(config.data_dir, app.state.discover_lock.locked())
             # the form only names rows by position, so it must belong to the result set it was rendered from
-            if state and state["status"] == "done" and form.get("run") == state["started_at"]:
+            if state and state["status"] == "done" and state["run_id"] and form.get("run") == state["run_id"]:
                 valid = s.sections + [GOOD_NEWS]
                 have = {feeds_mod.normalize_url(f.url) for f in db.list_feeds(conn)}
                 for raw in form.getlist("pick"):
-                    if not str(raw).isdigit() or int(raw) >= len(state["results"]):
+                    index = discovery.parse_index(raw)
+                    if index is None or index >= len(state["results"]):
                         continue
-                    index = int(raw)
                     result = state["results"][index]
                     key = feeds_mod.normalize_url(result.feed_url)
                     if not is_web_url(result.feed_url) or key in have:

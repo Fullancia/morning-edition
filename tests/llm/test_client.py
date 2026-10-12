@@ -174,3 +174,11 @@ def test_research_failures_raise_llm_error_and_are_recorded(caplog):
             llm.research("s", "u")
         assert len(llm.errors) == 1
     assert "socket exploded" in caplog.text
+
+
+def test_research_keeps_the_text_from_every_turn():
+    msgs = SequencedMessages(
+        research_response(["First findings. "], "pause_turn", [block("server_tool_use", id="s", name="w", input={})]),
+        research_response(["Last findings."]))
+    out = LLM("m", "low", client=fake_client(msgs)).research("s", "u")
+    assert "First findings." in out and out.endswith("Last findings.")

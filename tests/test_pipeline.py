@@ -626,3 +626,16 @@ def test_a_pick_moved_to_another_section_prints_there_and_the_prompt_names_home(
     moved = {p["id"] for p in sel["primary"]}
     primary_pieces = [p for p in pieces if p["item_id"] in moved]
     assert primary_pieces and all(p["section"] == "World" for p in primary_pieces)
+
+
+@respx.mock
+def test_article_links_into_the_local_network_are_not_fetched(setup, monkeypatch):
+    mock_world(respx.mock)
+    monkeypatch.setattr("morning_edition.sources.http.resolve",
+                        lambda host: ["10.0.0.5"] if host == "news.example.com" else ["93.184.216.34"])
+    db_path, data_dir = setup
+    eid = pipeline.build_edition(db_path, data_dir, services(), print_it=False)
+    assert not [c for c in respx.calls if c.request.url.host == "news.example.com"]
+    assert [c for c in respx.calls if c.request.url.host == "feeds.example.com"]  # feeds still use the normal client
+    ed = db.get_edition(db.connect(db_path), eid)
+    assert ed.status == "built"

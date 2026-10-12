@@ -237,3 +237,82 @@ def test_discover_drops_existing_feeds_and_caps_candidates_at_25(web, client):
 def test_discover_llm_failure_propagates(web, client):
     with pytest.raises(LLMError):
         run(FakeLLM(error=LLMError("Claude declined (other)")), client)
+
+
+# --- hardening: local addresses, size cap, time budget, de-duplication ---
+
+@pytest.fixture
+def public():
+    from morning_edition.sources.http import public_client
+    with public_client() as c:
+        yield c
+
+
+def test_candidates_pointing_at_the_local_network_find_nothing(web, public, monkeypatch):
+    from morning_edition.sources import http as http_mod
+    inside = web.get(host="10.0.0.5").mock(return_value=xml(FRESH))
+    loopback = web.get(host="127.0.0.1").mock(return_value=xml(FRESH))
+    for homepage in ("http://127.0.0.1", "http://[::1]", "http://10.0.0.5"):
+        assert discover.find_feed_url(public, cand(homepage=homepage)) is None
+        assert verify(public, cand(homepage=homepage, feed_url=homepage + "/feed")) is None
+    monkeypatch.setattr(http_mod, "resolve", lambda host: ["10.0.0.5"])
+    assert verify(public, cand(homepage="https://sneaky.example.com")) is None
+    web.get("https://example.com/").mock(return_value=httpx.Response(
+        302, headers={"location": "http://169.254.169.254/"}))
+    monkeypatch.setattr(http_mod, "resolve", lambda host: ["93.184.216.34"])
+    assert verify(public, cand()) is None
+    assert not inside.called and not loopback.called
+
+
+def test_public_candidates_still_verify_through_the_public_client(web, public):
+    web.get("https://example.com/feed").mock(return_value=xml(FRESH))
+    web.get("https://example.com/a1").mock(return_value=html(ARTICLE))
+    assert verify(public, cand()).recent_count == 4
+
+
+def test_an_oversize_feed_or_page_counts_as_not_a_feed(web, client):
+    huge = FRESH + " " * 2_100_000
+    web.get("https://example.com/feed").mock(return_value=xml(huge))
+    assert verify(client, cand(homepage="https://example.com")) is None
+    web.get("https://big.example.com/").mock(return_value=html("<p>" + "x" * 2_100_000))
+    assert discover.find_feed_url(client, cand(homepage="https://big.example.com")) is None
+
+
+def test_existing_feed_urls_reach_claude_without_query_or_login(web, client):
+    llm = FakeLLM()
+    existing = [Feed(id=1, url="https://user:pw@mine.example.org/feed?token=SECRET", section="Local",
+                     enabled=True, headlines_only=False)]
+    run(llm, client, existing)
+    user = llm.calls[0][2]
+    assert "https://mine.example.org/feed" in user
+    assert "SECRET" not in user and "user:pw" not in user and "token" not in user
+
+
+def test_outlets_sharing_one_feed_appear_once(web, client):
+    web.get("https://shared.example.com/rss").mock(return_value=xml(FRESH))
+    found = run(FakeLLM([cand("https://a.example.com", name="A", feed_url="https://shared.example.com/rss"),
+                         cand("https://b.example.com", name="B", feed_url="https://shared.example.com/rss")]),
+                client)
+    assert [f.name for f in found] == ["A"]
+
+
+def test_a_stalled_candidate_is_dropped_without_stalling_the_run(web, client, monkeypatch):
+    import threading
+    release = threading.Event()
+    real = discover.verify
+
+    def slow(client, candidate, now, existing_keys):
+        if "slow" in candidate.homepage:
+            release.wait(5)
+            return None
+        return real(client, candidate, now, existing_keys)
+
+    monkeypatch.setattr(discover, "verify", slow)
+    monkeypatch.setattr(discover, "CANDIDATE_BUDGET", 0.3)
+    web.get("https://quick.example.com/feed").mock(return_value=xml(FRESH))
+    try:
+        found = run(FakeLLM([cand("https://slow.example.com", name="Slow"),
+                             cand("https://quick.example.com", name="Quick")]), client)
+    finally:
+        release.set()
+    assert [f.name for f in found] == ["Quick"]

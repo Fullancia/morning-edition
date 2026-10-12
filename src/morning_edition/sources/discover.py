@@ -1,9 +1,12 @@
 """Find feeds for a reader: Claude researches publications, this module checks every candidate itself."""
 import logging
+import math
+import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel
@@ -13,7 +16,7 @@ from ..llm.client import LLM
 from ..settings import GOOD_NEWS
 from . import feeds as feeds_mod
 from .articles import fetch_article
-from .http import get_with_retry
+from .http import MAX_BODY_BYTES, get_with_retry
 
 log = logging.getLogger("morning_edition")
 
@@ -21,6 +24,7 @@ RECENT = timedelta(days=7)
 MAX_CANDIDATES = 25
 MAX_WORKERS = 8
 MAX_PROMPT_FEEDS = 100
+CANDIDATE_BUDGET = 45.0  # seconds a candidate gets, per wave of MAX_WORKERS, before it is given up on
 COMMON_PATHS = ("/feed", "/feed/", "/rss", "/rss.xml", "/feed.xml", "/index.xml", "/atom.xml")
 FEED_TYPES = ("application/rss+xml", "application/atom+xml")
 
@@ -95,10 +99,10 @@ def _is_web_url(url: str) -> bool:
 
 
 def _get(client: httpx.Client, url: str) -> httpx.Response | None:
-    """The response, or None when the site can't be reached at all."""
+    """The response, or None when the site can't be reached at all (or sent more than MAX_BODY_BYTES)."""
     try:
         return get_with_retry(client, url, headers={"User-Agent": feeds_mod.USER_AGENT}, timeout=15,
-                              follow_redirects=True)
+                              follow_redirects=True, max_bytes=MAX_BODY_BYTES)
     except (httpx.HTTPError, httpx.InvalidURL):
         return None
 
@@ -180,6 +184,12 @@ def verify(client: httpx.Client, candidate: Candidate, now: datetime,
         return None
 
 
+def _prompt_url(url: str) -> str:
+    """scheme://host/path only: no query string or login details go to Claude."""
+    parts = urlsplit(url.strip())
+    return urlunsplit((parts.scheme, parts.hostname or "", parts.path, "", ""))
+
+
 def _host(url: str) -> str:
     return urlsplit(url.strip()).netloc.lower().removeprefix("www.")
 
@@ -193,7 +203,7 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
         f"Interests: {interests.strip() or '(none listed)'}",
         f"Sections: {', '.join(sections)}, and {GOOD_NEWS}",
         "Feeds the reader already has (skip these):",
-        *[f"- {f.url}" for f in existing_feeds[:MAX_PROMPT_FEEDS]],
+        *[f"- {_prompt_url(f.url)}" for f in existing_feeds[:MAX_PROMPT_FEEDS]],
     ])
     notes = llm.research(RESEARCH_SYSTEM, user)
     extracted = llm.ask_json(
@@ -213,9 +223,30 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
     candidates = candidates[:MAX_CANDIDATES]
 
     existing_keys = {feeds_mod.normalize_url(f.url) for f in existing_feeds}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        verified = list(pool.map(lambda c: verify(client, c, now, existing_keys), candidates))
+    found = _verify_all(client, candidates, now, existing_keys)
     order = {s: i for i, s in enumerate(valid)}
-    found = [v for v in verified if v is not None]
     found.sort(key=lambda v: (order[v.section], -v.recent_count))
-    return found
+    unique: dict[str, DiscoveredFeed] = {}
+    for v in found:
+        unique.setdefault(feeds_mod.normalize_url(v.feed_url), v)  # two outlets can share one feed
+    return list(unique.values())
+
+
+def _verify_all(client: httpx.Client, candidates: list[Candidate], now: datetime,
+                existing_keys: set[str]) -> list[DiscoveredFeed]:
+    """Verify concurrently; a host that stalls past its time budget is dropped instead of stalling the run."""
+    pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    try:
+        futures = [pool.submit(verify, client, c, now, existing_keys) for c in candidates]
+        deadline = time.monotonic() + CANDIDATE_BUDGET * math.ceil(len(candidates) / MAX_WORKERS)
+        out: list[DiscoveredFeed] = []
+        for future in futures:
+            try:
+                result = future.result(timeout=max(0.0, deadline - time.monotonic()))
+            except FutureTimeout:
+                continue
+            if result is not None:
+                out.append(result)
+        return out
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
