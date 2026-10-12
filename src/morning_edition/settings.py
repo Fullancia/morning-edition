@@ -2,7 +2,7 @@ import re
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 GOOD_NEWS = "Good News"
 MODEL_CHOICES = [
@@ -48,6 +48,8 @@ class Settings(BaseModel):
     model: str = "claude-sonnet-5-5"
     effort: Literal["low", "medium", "high", "xhigh", "max"] = "medium"
     halftone_gamma: float = Field(default=0.5, gt=0)
+    auto_update: bool = False
+    update_time: str = "02:30"
 
     @model_validator(mode="before")
     @classmethod
@@ -76,11 +78,11 @@ class Settings(BaseModel):
     def home(self) -> WeatherLocation:
         return self.weather_locations[0] if self.weather_locations else WeatherLocation()
 
-    @field_validator("print_time")
+    @field_validator("print_time", "update_time")
     @classmethod
-    def _hh_mm(cls, v: str) -> str:
+    def _hh_mm(cls, v: str, info: ValidationInfo) -> str:
         if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
-            raise ValueError("print_time must be HH:MM (24 hour)")
+            raise ValueError(f"{info.field_name} must be HH:MM (24 hour)")
         return v
 
     @field_validator("timezone")

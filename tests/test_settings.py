@@ -23,6 +23,15 @@ def test_print_time_must_be_hh_mm():
         Settings(print_time="5:30am")
 
 
+def test_update_settings_default_off_at_two_thirty_and_validate_the_time():
+    s = Settings()
+    assert s.auto_update is False and s.update_time == "02:30"
+    assert Settings(auto_update=True, update_time="23:59").update_time == "23:59"
+    for bad in ("2:30", "24:00", "02:60", "", "soon"):
+        with pytest.raises(ValidationError, match="update_time"):
+            Settings(update_time=bad)
+
+
 def test_timezone_must_exist():
     with pytest.raises(ValidationError):
         Settings(timezone="Mars/Olympus")

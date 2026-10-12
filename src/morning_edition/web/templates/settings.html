@@ -60,7 +60,33 @@
     <select name="effort">{% for v in ["low", "medium", "high", "xhigh", "max"] %}<option value="{{ v }}"{% if v == s.effort %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
   </label>
   <button>Save settings</button>
+
+  <h2 id="updates">Updates</h2>
+  {% if upd.version %}<p>Version <strong>{{ upd.version }}</strong>{% if upd.commit %} <span class="muted">({{ upd.commit }})</span>{% endif %}</p>
+  {% else %}<p>This is a <strong>development build</strong>.</p>{% endif %}
+  {% if upd.configured %}
+  {% if upd.status.check_result == "update_available" %}<p class="ok"><strong>Update available.</strong>{% if upd.checked %} <span class="muted">Checked {{ upd.checked }}.</span>{% endif %}</p>
+  {% elif upd.status.check_result == "up_to_date" %}<p class="ok"><strong>Up to date.</strong>{% if upd.checked %} <span class="muted">Checked {{ upd.checked }}.</span>{% endif %}</p>
+  {% elif upd.status.check_result == "error" %}<p class="error">{{ upd.status.check_error }}</p>
+  {% else %}<p class="muted">Not checked yet.</p>{% endif %}
+  {% if upd.status.latest_sha %}<p class="muted">Latest change: <code>{{ upd.status.latest_sha }}</code> {{ upd.status.latest_message }}{% if upd.status.latest_date %} ({{ upd.status.latest_date }}){% endif %}{% if upd.commits_url %}. <a href="{{ upd.commits_url }}">See recent changes</a>{% endif %}</p>{% endif %}
+  {% if upd.status.update_result == "failed" %}<p class="error">{{ upd.status.update_error }}</p>
+  {% elif upd.status.update_requested_at and upd.requested %}<p class="muted">An update was requested {{ upd.requested }}.</p>{% endif %}
+  {% if upd.status.auto_note %}<p class="muted">Last overnight run{% if upd.auto %} ({{ upd.auto }}){% endif %}: {{ upd.status.auto_note }}</p>{% endif %}
+  <div class="row">
+    <button type="submit" form="updates-check">Check for updates</button>
+    <button type="submit" form="updates-apply" onclick="return confirm('Update now? The dashboard restarts and is unavailable for about a minute.');">Update now</button>
+  </div>
+  <p class="muted">Updating downloads the newest version and restarts the dashboard for about a minute. An edition that is building blocks it.</p>
+  <label class="check"><input type="checkbox" name="auto_update"{% if s.auto_update %} checked{% endif %}> Update automatically overnight</label>
+  <label>Overnight update time <input type="time" name="update_time" value="{{ s.update_time }}"></label>
+  {% else %}
+  <p class="muted">Updating from the dashboard needs the updater service (see the README). Until then, update by running <code>docker compose pull &amp;&amp; docker compose up -d</code> on the machine that hosts Morning Edition.</p>
+  {% endif %}
+  <button>Save settings</button>
 </form>
+{% if upd.configured %}<form method="post" action="/updates/check" id="updates-check"></form>
+<form method="post" action="/updates/apply" id="updates-apply"></form>{% endif %}
 <div class="savebar" id="savebar" hidden>
   <div class="savebar-inner">
     <span>Unsaved changes</span>

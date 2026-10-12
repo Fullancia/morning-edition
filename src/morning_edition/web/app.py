@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from starlette.middleware.sessions import SessionMiddleware
 
-from .. import db, pipeline, scheduler
+from .. import db, pipeline, scheduler, updates
 from ..config import AppConfig, load_config
 from ..layout.renderer import FONTS, MASTHEAD_WEIGHTS, render_test_page
 from ..llm.client import LLM, LLMError
@@ -192,13 +192,25 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
     def page(request: Request, name: str, **ctx) -> Response:
         return templates.TemplateResponse(request, name, ctx)
 
+    def updates_context(s: Settings) -> dict:
+        """What the Updates section shows. Never includes the updater token."""
+        status = updates.load_status(config.data_dir)
+        version = config.app_version
+        return {"configured": updates.configured(config), "status": status,
+                "version": version if version and version != "dev" else "",
+                "commit": config.app_commit[:7],
+                "commits_url": updates.commits_url(config.app_repo),
+                "checked": updates.format_when(status.checked_at, s.timezone),
+                "requested": updates.format_when(status.update_requested_at, s.timezone),
+                "auto": updates.format_when(status.auto_at, s.timezone)}
+
     def settings_page(request: Request, conn, message: str = "", error: str = "") -> Response:
         s = db.load_settings(conn)
         return page(request, "settings.html", s=s, feeds=db.list_feeds(conn), fonts=MASTHEAD_FONTS,
                     font_weights=MASTHEAD_WEIGHTS,
                     models=MODEL_CHOICES + ([(s.model, s.model)] if s.model not in dict(MODEL_CHOICES) else []),
                     us_timezones=US_TIMEZONES, timezones=timezone_choices(s.timezone),
-                    sections=s.sections + [GOOD_NEWS], message=message, error=error,
+                    sections=s.sections + [GOOD_NEWS], message=message, error=error, upd=updates_context(s),
                     next_run=scheduler.next_run(app.state.scheduler) if app.state.scheduler else None)
 
     @app.get("/login")
@@ -242,6 +254,9 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             data["sections"] = [x.strip() for x in str(form.get("sections", "")).split(",")]
             data["auto_print"] = form.get("auto_print") == "on"
             data["expanded_weather"] = form.get("expanded_weather") == "on"
+            # the overnight-update controls only exist when an updater is set up; otherwise keep what's saved
+            data["auto_update"] = (form.get("auto_update") == "on") if "update_time" in form else current.auto_update
+            data["update_time"] = str(form.get("update_time") or current.update_time)
             query = str(form.get("home_location", "")).strip()
             others = current.weather_locations[1:]
 
@@ -484,6 +499,31 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
                 pass  # no PDF; the archive page shows the status
         app.state.start_thread(job)
         return RedirectResponse("/editions", status_code=303)
+
+    @app.post("/updates/check", dependencies=[Depends(require_login)])
+    def updates_check(request: Request):
+        if not updates.configured(config):
+            return _settings_with(request, error="The updater service is not set up. See the README.")
+        updates.run_check(services.http, config)
+        return RedirectResponse("/settings#updates", status_code=303)
+
+    @app.post("/updates/apply", dependencies=[Depends(require_login)])
+    def updates_apply(request: Request):
+        if not updates.configured(config):
+            return _settings_with(request, error="The updater service is not set up. See the README.")
+        if pipeline.BUILD_LOCK.locked():
+            return _settings_with(request, error="An edition is building right now. Try the update again "
+                                                 "when it finishes.")
+        app.state.start_thread(updates.request_update, services.http, config.watchtower_url,
+                               config.watchtower_token, config.app_image, config.data_dir)
+        return page(request, "updating.html")
+
+    def _settings_with(request: Request, error: str) -> Response:
+        conn = db.connect(db_path)
+        try:
+            return settings_page(request, conn, error=error)
+        finally:
+            conn.close()
 
     @app.post("/printer/test", dependencies=[Depends(require_login)])
     def printer_test(request: Request):
