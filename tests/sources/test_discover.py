@@ -174,7 +174,7 @@ class FakeLLM:
 
     def ask_json(self, system, user, schema, **kwargs):
         self.calls.append(("ask_json", system, user))
-        assert schema is CandidateList
+        assert issubclass(schema, CandidateList)
         return CandidateList(candidates=self.candidates)
 
 
@@ -212,6 +212,59 @@ def test_discover_verifies_filters_dedupes_and_sorts(web, client):
     found = run(FakeLLM(candidates), client)
     assert [(f.name, f.section) for f in found] == [
         ("Local Two", "Local"), ("Local One", "Local"), ("Tech", "Tech"), ("Good", "Good News")]
+
+
+def test_interest_names_used_as_sections_land_in_a_configured_section(web, client):
+    for host in ("f1", "space", "shout", "ai"):
+        web.get(f"https://{host}.example.com/feed").mock(return_value=xml(FRESH))
+    found = run(FakeLLM([
+        cand("https://f1.example.com", section="Formula 1", name="F1 Daily"),
+        cand("https://space.example.com", section="Space", name="Space Weekly"),
+        cand("https://shout.example.com", section="TECH", name="Shouting Tech"),
+        cand("https://ai.example.com", section="  world ", name="Padded World"),
+    ]), client)
+    assert {f.name: f.section for f in found} == {
+        "F1 Daily": "World", "Space Weekly": "World", "Shouting Tech": "Tech", "Padded World": "World"}
+
+
+def test_an_unknown_section_with_only_one_configured_goes_to_it(web, client):
+    web.get("https://f1.example.com/feed").mock(return_value=xml(FRESH))
+    found = run(FakeLLM([cand("https://f1.example.com", section="Formula 1")]), client, sections=("Local",))
+    assert [f.section for f in found] == ["Local"]
+
+
+def test_extraction_schema_limits_section_to_exactly_the_valid_sections():
+    from morning_edition.llm.client import strict_schema
+    schema = discover.candidate_list_model(["Local", "World", "Tech", "Good News"])
+    assert issubclass(schema, CandidateList)
+    item = strict_schema(schema)["properties"]["candidates"]["items"]
+    assert item["properties"]["section"] == {"enum": ["Local", "World", "Tech", "Good News"], "type": "string"}
+    assert item["additionalProperties"] is False and "name" in item["required"]
+
+
+def test_extraction_schema_repairs_a_stray_section_instead_of_failing():
+    schema = discover.candidate_list_model(["Local", "World", "Tech", "Good News"])
+    payload = {"candidates": [
+        {"name": "A", "homepage": "https://a.example.com", "feed_url": None, "section": "Formula 1", "reason": "r"},
+        {"name": "B", "homepage": "https://b.example.com", "feed_url": None, "section": "tech", "reason": "r"}]}
+    out = schema.model_validate(payload)
+    assert [c.section for c in out.candidates] == ["World", "Tech"]
+
+
+def test_the_extraction_call_gets_the_per_run_schema_and_prompts_map_interests_to_sections(web, client):
+    llm = FakeLLM()
+    llm_schemas = []
+    real = llm.ask_json
+    llm.ask_json = lambda system, user, schema, **kw: (llm_schemas.append(schema), real(system, user, schema, **kw))[1]
+    discover.discover(llm, client, interests="Formula 1, Space", home="Albany, NY",
+                      sections=["Local", "World", "Tech"], existing_feeds=[], now=NOW)
+    (schema,) = llm_schemas
+    assert schema.model_json_schema()["$defs"]["Candidate"]["properties"]["section"]["enum"] \
+        == ["Local", "World", "Tech", "Good News"]
+    (_, research_system, research_user), (_, extract_system, _) = llm.calls
+    assert "not section names" in research_user.lower()
+    assert "closest" in research_system and "never" in research_system.lower() and "interest" in research_system
+    assert "exactly one of the allowed sections" in extract_system
 
 
 def test_discover_sorts_by_recent_count_within_a_section(web, client):

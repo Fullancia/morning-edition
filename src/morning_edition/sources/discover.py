@@ -6,10 +6,11 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
+from typing import Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model, field_validator
 
 from ..db import Feed
 from ..llm.client import LLM
@@ -41,6 +42,33 @@ class CandidateList(BaseModel):
     candidates: list[Candidate]
 
 
+def resolve_section(raw: str, valid: list[str]) -> str:
+    """`raw` matched to a valid section ignoring case and padding. Anything else (an interest like
+    "Formula 1" used as a section name) goes to the first configured section after the local one,
+    so the outlet is kept rather than dropped."""
+    by_name = {v.lower(): v for v in valid}
+    exact = by_name.get(str(raw).strip().lower())
+    if exact is not None:
+        return exact
+    configured = [v for v in valid if v != GOOD_NEWS]
+    if len(configured) > 1:
+        return configured[1]
+    return configured[0] if configured else GOOD_NEWS
+
+
+def candidate_list_model(valid: list[str]) -> type[CandidateList]:
+    """CandidateList for one run: `section` is an enum of exactly `valid`, so structured output
+    cannot return anything else. A stray value (the model is a guest in its own schema) is repaired
+    by resolve_section instead of failing the whole search."""
+    names = tuple(dict.fromkeys(valid))
+    item = create_model(
+        "Candidate", __base__=Candidate,
+        __validators__={"repair_section": field_validator("section", mode="before")(
+            lambda cls, v: resolve_section(v, list(names)))},
+        section=(Literal[names], ...))
+    return create_model("CandidateList", __base__=CandidateList, candidates=(list[item], ...))
+
+
 class DiscoveredFeed(BaseModel):
     name: str
     feed_url: str
@@ -61,7 +89,9 @@ Rules:
 cover the reader's home area (the town, county, or nearby region).
 - Also cover a "Good News" section: outlets that publish uplifting news about people, communities, \
 nature, and progress.
-- For each interest the reader lists, find outlets and assign them to the closest section.
+- For each interest the reader lists (AI, space, a sport, a hobby), find outlets for it and assign \
+them to the closest of the reader's sections. Interests are topics, never section names: do not \
+invent a section for one.
 - Skip news aggregators (Google News, Yahoo News, MSN), outlets behind a paywall or a login, and \
 every feed the reader already has.
 - Find 3 to 6 outlets per section.
@@ -72,7 +102,9 @@ Only report outlets you found by searching. Never invent a URL."""
 
 EXTRACT_SYSTEM = """You turn research notes about news publications into a structured list. One \
 candidate per publication, using only what the notes say. Use null for feed_url when the notes do not \
-give a feed URL; never guess one. Keep each reason to one short sentence."""
+give a feed URL; never guess one. Keep each reason to one short sentence. The section must be exactly \
+one of the allowed sections; when the notes file an outlet under an interest or a topic that is not \
+an allowed section, pick the closest allowed section."""
 
 
 class _FeedLinks(HTMLParser):
@@ -200,7 +232,7 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
     valid = [*sections, GOOD_NEWS]
     user = "\n".join([
         f"Home area: {home or '(not set)'}",
-        f"Interests: {interests.strip() or '(none listed)'}",
+        f"Interests (topics to cover, not section names): {interests.strip() or '(none listed)'}",
         f"Sections: {', '.join(sections)}, and {GOOD_NEWS}",
         "Feeds the reader already has (skip these):",
         *[f"- {_prompt_url(f.url)}" for f in existing_feeds[:MAX_PROMPT_FEEDS]],
@@ -208,17 +240,18 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
     notes = llm.research(RESEARCH_SYSTEM, user)
     extracted = llm.ask_json(
         EXTRACT_SYSTEM,
-        f"Sections allowed: {', '.join(valid)}\n\nResearch notes:\n{notes}", CandidateList)
+        f"Sections allowed: {', '.join(valid)}\n\nResearch notes:\n{notes}", candidate_list_model(valid))
 
-    by_name = {s.lower(): s for s in valid}
     seen: set[str] = set()
     candidates: list[Candidate] = []
     for c in extracted.candidates:
-        section = by_name.get(c.section.strip().lower())
         host = _host(c.homepage)
-        if section is None or not _is_web_url(c.homepage) or host in seen:
+        if not _is_web_url(c.homepage) or host in seen:
             continue
         seen.add(host)
+        section = resolve_section(c.section, valid)
+        if section != c.section:
+            log.info("Feed discovery moved %s from section %r to %r", urlsplit(c.homepage).hostname, c.section, section)
         candidates.append(c.model_copy(update={"section": section}))
     candidates = candidates[:MAX_CANDIDATES]
 
