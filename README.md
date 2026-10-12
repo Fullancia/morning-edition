@@ -20,15 +20,16 @@ Morning Edition is a self-hosted personal newspaper, written with Claude and pri
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` and set `DASHBOARD_PASSWORD` to a memorable password and `ANTHROPIC_API_KEY` to your Anthropic API key. The `PORT` and `TZ` settings are optional (defaults are 8080 and UTC). Optionally, generate a strong `SESSION_SECRET` with:
+   Edit `.env` and set `DASHBOARD_PASSWORD` to a memorable password and `ANTHROPIC_API_KEY` to your Anthropic API key. Set `WATCHTOWER_TOKEN` to a long random string (see [Updates](#updates)). The `PORT` and `TZ` settings are optional (defaults are 8080 and UTC). Generate a strong `WATCHTOWER_TOKEN`, and optionally a `SESSION_SECRET`, with:
    ```bash
    python3 -c "import secrets; print(secrets.token_urlsafe(48))"
    ```
 
-3. Start the container:
+3. Start the containers:
    ```bash
-   docker compose up -d --build
+   docker compose up -d
    ```
+   This pulls the published Morning Edition image and the updater container. To build the image from the source in this folder instead, run `docker compose up -d --build`.
 
 4. Open the dashboard in your browser:
    ```
@@ -88,10 +89,46 @@ Google News feeds are marked "(headlines only)" in the feed row. Because Google 
 
 Not sure where to find feeds? Press "Find feeds for me" in the Feeds section of Settings (or on the Today page while you have none). Claude searches the web for publications that match your interests, your home area, and your sections, plus a few Good News outlets. The app then fetches every candidate itself and keeps only feeds that work and have stories from the last week. You review the list, change sections if you like, and add the ones you want. Sites that block full-text reading are added as headlines only. This needs `ANTHROPIC_API_KEY` in `.env`, and a search costs a few cents and takes a minute or two.
 
+## Updates
+
+Morning Edition is published as a ready-made image at `ghcr.io/rickgram/morning-edition` (for both Intel/AMD and ARM machines). Every change that lands on the main branch passes the tests and is built and published automatically, so an update is just "pull the new image and restart".
+
+The compose file runs a second container, [Watchtower](https://github.com/nicholas-fedor/watchtower) (the maintained fork), that does the pulling and restarting when Morning Edition asks it to:
+
+- The updater has access to the Docker socket by design; that is how it can restart containers. Treat it like any container with that access.
+- Its API requires the `WATCHTOWER_TOKEN` from your `.env`, and it is not published outside the compose network (it has no `ports:`), so only the Morning Edition container can reach it.
+- It only touches containers carrying the `com.centurylinklabs.watchtower.enable=true` label, which only the Morning Edition container has. Other containers on the same machine are left alone.
+- It has no schedule of its own; it updates only when asked.
+
+In the dashboard, open Settings and find the Updates section:
+
+- **Check for updates** asks whether a newer image is published and shows the latest change.
+- **Update now** pulls the new image and restarts the dashboard, which is unavailable for about a minute. It refuses while an edition is building.
+- **Update automatically overnight** checks at the time you choose (in your paper's timezone) and updates only if there is something new. It skips the night, and says why, if an edition is building or the next edition builds within the hour. The result of the last overnight run shows in the Updates section.
+
+If you prefer to update by hand, run this in the folder that holds `docker-compose.yml`:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### Switching an existing install to published images
+
+If you set Morning Edition up before images were published (it was built from this folder):
+
+1. Pull the new compose file: `git pull`
+2. Add `WATCHTOWER_TOKEN` to `.env`, using the generator command in Setup above.
+3. Run `docker compose pull && docker compose up -d`
+
+Your settings and editions live in `./data` and carry over unchanged.
+
 ## Troubleshooting
 
 **Container keeps restarting**
 Run `docker compose logs` to check for errors. The most common cause is a missing `DASHBOARD_PASSWORD` in `.env`.
+
+**`docker compose` says WATCHTOWER_TOKEN is missing**
+Add a `WATCHTOWER_TOKEN` line to `.env` (see Setup).
 
 **Test print fails or prints blank**
 - Double-check the printer address is correct
