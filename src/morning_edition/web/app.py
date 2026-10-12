@@ -25,11 +25,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from .. import db, pipeline, scheduler
 from ..config import AppConfig, load_config
 from ..layout.renderer import FONTS, MASTHEAD_WEIGHTS, render_test_page
-from ..llm.client import LLM
+from ..llm.client import LLM, LLMError
 from ..printing import CupsPrinter, PrintError
 from ..settings import GOOD_NEWS, MASTHEAD_FONTS, MODEL_CHOICES, CalendarLink, Settings, WeatherLocation
+from ..sources import discover as discover_mod
 from ..sources import feeds as feeds_mod
 from ..sources import weather
+from . import discovery
 from .auth import check_password
 from .paper import is_web_url, todays_paper
 
@@ -170,6 +172,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
     app.state.services = services
     app.state.scheduler = None
     app.state.last_thread = None
+    app.state.discover_lock = threading.Lock()  # held while a feed search runs; separate from BUILD_LOCK
 
     def start_thread(target, *args) -> None:
         thread = threading.Thread(target=target, args=args, daemon=True)
@@ -213,10 +216,14 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         return RedirectResponse("/login", status_code=303)
 
     @app.get("/settings", dependencies=[Depends(require_login)])
-    def settings_get(request: Request):
+    def settings_get(request: Request, added: str = ""):
         conn = db.connect(db_path)
         try:
-            return settings_page(request, conn)
+            message = ""
+            if added.isdigit():
+                n = int(added)
+                message = f"Added {n} feed{'' if n == 1 else 's'}." if n else "No new feeds were added."
+            return settings_page(request, conn, message=message)
         finally:
             conn.close()
 
@@ -337,6 +344,87 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             conn.close()
         return RedirectResponse("/settings#feeds", status_code=303)
 
+    @app.get("/feeds/discover", dependencies=[Depends(require_login)])
+    def discover_get(request: Request):
+        conn = db.connect(db_path)
+        try:
+            s = db.load_settings(conn)
+        finally:
+            conn.close()
+        state = discovery.load_state(config.data_dir, app.state.discover_lock.locked())
+        valid = s.sections + [GOOD_NEWS]
+        done = state is not None and state["status"] == "done"
+        return page(request, "discover.html", has_key=services.llm_factory(s) is not None, state=state,
+                    groups=discovery.group_by_section(state["results"], valid) if done else [],
+                    sections=valid)
+
+    def run_discovery(llm, s: Settings, existing: list[db.Feed], started: str) -> None:
+        """Background thread: search, verify, and save the outcome for the page to show."""
+        data_dir = config.data_dir
+        try:
+            found = discover_mod.discover(llm, services.http, s.interests, s.home.label or s.home.query,
+                                          s.sections, existing, services.now())
+            discovery.save_state(data_dir, "done", started, services.now().isoformat(), results=found)
+        except LLMError as exc:
+            discovery.save_state(data_dir, "error", started, services.now().isoformat(), error=str(exc)[:300])
+        except Exception:  # noqa: BLE001 - the page shows a generic message; details go to the log
+            logging.getLogger("morning_edition").exception("Feed search failed")
+            discovery.save_state(data_dir, "error", started, services.now().isoformat(),
+                                 error="The search failed. Check the logs for details.")
+        finally:
+            app.state.discover_lock.release()
+
+    @app.post("/feeds/discover", dependencies=[Depends(require_login)])
+    def discover_post():
+        conn = db.connect(db_path)
+        try:
+            s = db.load_settings(conn)
+            existing = db.list_feeds(conn)
+        finally:
+            conn.close()
+        llm = services.llm_factory(s)
+        if llm is not None and app.state.discover_lock.acquire(blocking=False):
+            try:
+                started = services.now().isoformat()
+                discovery.save_state(config.data_dir, "running", started)
+                app.state.start_thread(run_discovery, llm, s, existing, started)
+            except BaseException:
+                app.state.discover_lock.release()
+                raise
+        return RedirectResponse("/feeds/discover", status_code=303)
+
+    @app.post("/feeds/discover/add", dependencies=[Depends(require_login)])
+    async def discover_add(request: Request):
+        form = await request.form()
+        conn = db.connect(db_path)
+        added = 0
+        try:
+            s = db.load_settings(conn)
+            state = discovery.load_state(config.data_dir, app.state.discover_lock.locked())
+            # the form only names rows by position, so it must belong to the result set it was rendered from
+            if state and state["status"] == "done" and form.get("run") == state["started_at"]:
+                valid = s.sections + [GOOD_NEWS]
+                have = {feeds_mod.normalize_url(f.url) for f in db.list_feeds(conn)}
+                for raw in form.getlist("pick"):
+                    if not str(raw).isdigit() or int(raw) >= len(state["results"]):
+                        continue
+                    index = int(raw)
+                    result = state["results"][index]
+                    key = feeds_mod.normalize_url(result.feed_url)
+                    if not is_web_url(result.feed_url) or key in have:
+                        continue
+                    chosen = form.get(f"section_{index}")
+                    section = chosen if chosen in valid else (result.section if result.section in valid else valid[0])
+                    try:
+                        db.add_feed(conn, result.feed_url, section, headlines_only=result.headlines_only)
+                    except sqlite3.IntegrityError:
+                        continue
+                    have.add(key)
+                    added += 1
+        finally:
+            conn.close()
+        return RedirectResponse(f"/settings?added={added}#feeds", status_code=303)
+
     @app.get("/", dependencies=[Depends(require_login)])
     def today(request: Request):
         conn = db.connect(db_path)
@@ -344,6 +432,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             latest = next(iter(db.list_editions(conn, limit=1)), None)
             s = db.load_settings(conn)
             return page(request, "today.html", ed=latest, building=pipeline.BUILD_LOCK.locked(), s=s,
+                        has_feeds=bool(db.list_feeds(conn)),
                         paper=todays_paper(conn, latest, config.data_dir, s.sections),
                         next_run=scheduler.next_run(app.state.scheduler) if app.state.scheduler else None)
         finally:

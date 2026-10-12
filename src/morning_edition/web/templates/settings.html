@@ -113,6 +113,7 @@
 <form method="post" action="/printer/test"><button>Test print</button></form>
 
 <h2 id="feeds">Feeds</h2>
+<p><a class="button" href="/feeds/discover">Find feeds for me</a></p>
 <table class="feeds">
   {% for f in feeds %}
   <tr class="{{ '' if f.enabled else 'off' }}">

@@ -11,6 +11,10 @@
 <form method="post" action="/build"><button{% if building %} disabled{% endif %}>Build a preview now</button></form>
 <p class="muted">Previews are not printed. Use Print on the archive page to print one.</p>
 
+{% if not has_feeds %}
+<p>No feeds yet. <a class="button" href="/feeds/discover">Find feeds for me</a> or add your own in <a href="/settings#feeds">Settings</a>.</p>
+{% endif %}
+
 {% if ed %}
 <h2>Today's paper</h2>
 {% if paper %}

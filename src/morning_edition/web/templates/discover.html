@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block head %}{% if state and state.status == "running" %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block title %}Find feeds{% endblock %}
+{% block body %}
+<h1>Find feeds for me</h1>
+{% macro search_button(label) %}<form method="post" action="/feeds/discover"><button>{{ label }}</button></form>{% endmacro %}
+
+{% if not has_key %}
+<p>Finding feeds needs an Anthropic API key (ANTHROPIC_API_KEY in .env).</p>
+{% elif state and state.status == "running" %}
+<p><span class="badge">Searching...</span> Claude is looking for publications and checking each feed. This takes a minute or two, and this page refreshes on its own.</p>
+{% else %}
+{% if state and state.status == "error" %}<p class="error">{{ state.error }}</p>{% endif %}
+{% if state and state.status == "done" %}
+  {% if groups %}
+  <p class="muted">Found {{ state.results | length }} feed{{ "" if state.results | length == 1 else "s" }}. Every one was fetched and has stories from the last week. Pick the ones you want and change a section if it fits better elsewhere.</p>
+  <form method="post" action="/feeds/discover/add" class="found">
+    <input type="hidden" name="run" value="{{ state.started_at }}">
+    {% for group in groups %}
+    <h2>{{ group.name }}</h2>
+    <ul class="found-list">
+      {% for row in group.rows %}
+      {% set r = row.r %}
+      <li>
+        <div class="found-head">
+          <label class="check"><input type="checkbox" name="pick" value="{{ row.i }}"{% if not r.headlines_only %} checked{% endif %}> <strong>{{ r.name }}</strong></label>
+          {% if r.headlines_only %}<span class="badge">headlines only</span>{% endif %}
+        </div>
+        <p class="muted found-meta">
+          {% if row.homepage_link %}<a href="{{ row.homepage_link }}" target="_blank" rel="noopener noreferrer">{{ row.homepage_link }}</a> &middot; {% endif %}{{ r.recent_count }} stor{{ "y" if r.recent_count == 1 else "ies" }} this week
+        </p>
+        <p class="found-reason">{{ r.reason }}</p>
+        {% if r.sample_titles %}<ul class="samples">{% for t in r.sample_titles %}<li>{{ t }}</li>{% endfor %}</ul>{% endif %}
+        <label>Section
+          <select name="section_{{ row.i }}">{% for sec in sections %}<option value="{{ sec }}"{% if sec == r.section %} selected{% endif %}>{{ sec }}</option>{% endfor %}</select>
+        </label>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+    <button>Add selected feeds</button>
+  </form>
+  {% else %}
+  <p>No new feeds with stories from the last week turned up. Try again, or add more detail to "What you care about" in Settings.</p>
+  {% endif %}
+  <h2>Search again</h2>
+  {{ search_button("Search again") }}
+{% else %}
+<p>Claude searches the web for publications that match your interests, your home area, and your sections, then this app fetches each feed to make sure it works and has recent stories. You review the list and add the ones you like. Each search costs a few cents and takes a minute or two.</p>
+{{ search_button("Find feeds for me") }}
+{% endif %}
+{% endif %}
+<p class="muted"><a href="/settings#feeds">Back to Settings</a></p>
+{% endblock %}

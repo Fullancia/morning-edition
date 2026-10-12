@@ -84,6 +84,10 @@ Most news sites and blogs publish an RSS feed. Here are a few that work well:
 
 Google News feeds are marked "(headlines only)" in the feed row. Because Google News links point to aggregated content rather than original articles, those feeds print as one-line headlines only. You can find a custom Google News feed for any topic at https://news.google.com/.
 
+### Finding feeds
+
+Not sure where to find feeds? Press "Find feeds for me" in the Feeds section of Settings (or on the Today page while you have none). Claude searches the web for publications that match your interests, your home area, and your sections, plus a few Good News outlets. The app then fetches every candidate itself and keeps only feeds that work and have stories from the last week. You review the list, change sections if you like, and add the ones you want. Sites that block full-text reading are added as headlines only. This needs `ANTHROPIC_API_KEY` in `.env`, and a search costs a few cents and takes a minute or two.
+
 ## Troubleshooting
 
 **Container keeps restarting**
