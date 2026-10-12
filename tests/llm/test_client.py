@@ -96,3 +96,81 @@ def test_every_failure_kind_is_recorded():
     with pytest.raises(LLMError):
         bad.ask_json("s", "u", Outer)
     assert len(bad.errors) == 1
+
+
+def block(kind, **fields):
+    return SimpleNamespace(type=kind, **fields)
+
+
+def research_response(text_blocks, stop="end_turn", extra=()):
+    return SimpleNamespace(stop_reason=stop, stop_details=None,
+                           content=[*extra, *[block("text", text=t) for t in text_blocks]])
+
+
+class SequencedMessages(FakeMessages):
+    def __init__(self, *responses):
+        super().__init__()
+        self.queue = list(responses)
+
+    def create(self, **kwargs):
+        self.calls.append({**kwargs, "messages": list(kwargs["messages"])})
+        return self.queue.pop(0)
+
+
+def test_research_sends_web_search_tool_and_no_structured_format():
+    msgs = FakeMessages(research_response(["Found ", "three outlets."]))
+    llm = LLM("claude-opus-5-5", "medium", client=fake_client(msgs))
+    assert llm.research("sys", "find feeds", max_searches=7) == "Found three outlets."
+    call = msgs.calls[0]
+    assert call["tools"] == [{"type": "web_search_20260209", "name": "web_search", "max_uses": 7}]
+    assert call["output_config"] == {"effort": "medium"}
+    assert call["betas"] == ["server-side-fallback-2026-07-01"]
+    assert call["fallbacks"] == "default"
+    assert call["system"] == "sys" and call["max_tokens"] == 16000
+    assert call["messages"] == [{"role": "user", "content": "find feeds"}]
+
+
+def test_research_resumes_after_pause_turn_with_the_assistant_content():
+    searching = [block("server_tool_use", id="s1", name="web_search", input={"query": "x"})]
+    paused = research_response([], stop="pause_turn", extra=searching)
+    final = research_response(["done"])
+    msgs = SequencedMessages(paused, final)
+    llm = LLM("m", "low", client=fake_client(msgs))
+    assert llm.research("s", "u") == "done"
+    assert len(msgs.calls) == 2
+    assert msgs.calls[1]["messages"] == [{"role": "user", "content": "u"},
+                                         {"role": "assistant", "content": searching}]
+    assert llm.errors == []
+
+
+def test_research_keeps_earlier_paused_content_when_it_pauses_again():
+    first = [block("server_tool_use", id="s1", name="web_search", input={})]
+    second = [block("server_tool_use", id="s2", name="web_search", input={})]
+    msgs = SequencedMessages(research_response([], "pause_turn", first),
+                             research_response([], "pause_turn", second), research_response(["ok"]))
+    assert LLM("m", "low", client=fake_client(msgs)).research("s", "u") == "ok"
+    assert msgs.calls[2]["messages"][1] == {"role": "assistant", "content": first + second}
+
+
+def test_research_gives_up_after_five_continuations():
+    pause = lambda: research_response([], "pause_turn", [block("server_tool_use", id="s", name="w", input={})])
+    msgs = SequencedMessages(*[pause() for _ in range(7)])
+    llm = LLM("m", "low", client=fake_client(msgs))
+    with pytest.raises(LLMError, match="paused"):
+        llm.research("s", "u")
+    assert len(msgs.calls) == 6  # the first call plus five continuations
+    assert len(llm.errors) == 1
+
+
+def test_research_failures_raise_llm_error_and_are_recorded(caplog):
+    refused = SimpleNamespace(stop_reason="refusal", content=[],
+                              stop_details=SimpleNamespace(category="other", explanation="no"))
+    truncated = SimpleNamespace(stop_reason="max_tokens", content=[block("text", text="partial")])
+    empty = research_response([])
+    boom = FakeMessages(error=RuntimeError("socket exploded"))
+    for msgs in (FakeMessages(refused), FakeMessages(truncated), FakeMessages(empty), boom):
+        llm = LLM("m", "low", client=fake_client(msgs))
+        with caplog.at_level("WARNING", logger="morning_edition"), pytest.raises(LLMError):
+            llm.research("s", "u")
+        assert len(llm.errors) == 1
+    assert "socket exploded" in caplog.text
