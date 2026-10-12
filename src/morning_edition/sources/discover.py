@@ -308,6 +308,9 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
     summary = DiscoverySummary(
         proposed=len(extracted.candidates), checked=len(candidates), verified=len(unique),
         rejected=dict(rejected), notes_excerpt="" if extracted.candidates else notes.strip()[:300])
+    log.info("Feed discovery finished: proposed=%d checked=%d verified=%d rejected=%s", summary.proposed,
+             summary.checked, summary.verified,
+             " ".join(f"{k}:{v}" for k, v in sorted(summary.rejected.items())) or "none")
     return DiscoveryResult(feeds=list(unique.values()), summary=summary)
 
 
@@ -318,19 +321,20 @@ def _verify_all(client: httpx.Client, candidates: list[Candidate], now: datetime
     pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     rejected: Counter = Counter()
     try:
-        futures = [pool.submit(verify, client, c, now, existing_keys) for c in candidates]
+        futures = [(c, pool.submit(verify, client, c, now, existing_keys)) for c in candidates]
         deadline = time.monotonic() + CANDIDATE_BUDGET * math.ceil(len(candidates) / MAX_WORKERS)
         out: list[DiscoveredFeed] = []
-        for future in futures:
+        for candidate, future in futures:
             try:
                 result, why = future.result(timeout=max(0.0, deadline - time.monotonic()))
             except FutureTimeout:
-                rejected[OVER_BUDGET] += 1
-                continue
+                result, why = None, OVER_BUDGET
             if result is not None:
                 out.append(result)
             else:
-                rejected[why or UNREACHABLE] += 1
+                why = why or UNREACHABLE
+                rejected[why] += 1
+                log.info("Feed discovery rejected %s: %s", urlsplit(candidate.homepage).hostname, why)
         return out, rejected
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

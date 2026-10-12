@@ -441,3 +441,24 @@ def test_the_notes_excerpt_is_capped_at_300_characters(web, client):
     llm = FakeLLM()
     llm.research = lambda system, user, **kw: "x" * 1000
     assert len(run_full(llm, client).summary.notes_excerpt) == 300
+
+
+def test_every_rejection_and_the_run_are_logged_by_host_without_query_strings(web, client, caplog):
+    import logging
+    caplog.set_level(logging.INFO, logger="morning_edition")
+    web.get("https://stale.example.com/feed").mock(return_value=xml(STALE))
+    web.get("https://ok.example.com/feed").mock(return_value=xml(FRESH))
+    web.get("https://ok.example.com/a1").mock(return_value=html(ARTICLE))
+    run(FakeLLM([
+        cand("https://stale.example.com/news?token=SECRET&x=1", name="Stale"),
+        cand("https://user:pw@nofeed.example.com/?session=SECRET", name="No feed"),
+        cand("https://ok.example.com", name="Ok"),
+    ]), client)
+    lines = [r.getMessage() for r in caplog.records if r.name == "morning_edition"]
+    assert "Feed discovery rejected stale.example.com: stale" in lines
+    assert "Feed discovery rejected nofeed.example.com: no_feed" in lines
+    assert not any("ok.example.com: " in line and "rejected" in line for line in lines)
+    summary = [line for line in lines if line.startswith("Feed discovery finished")]
+    assert summary == ["Feed discovery finished: proposed=3 checked=3 verified=1 rejected=no_feed:1 stale:1"]
+    for line in lines:
+        assert "SECRET" not in line and "token" not in line and "pw@" not in line and "?" not in line

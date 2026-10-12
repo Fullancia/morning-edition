@@ -17,7 +17,7 @@
   {% if state.summary and state.summary.proposed == 0 and state.summary.notes_excerpt %}
   <details>
     <summary>What Claude said</summary>
-    <p class="muted">{{ state.summary.notes_excerpt }}</p>
+    <p class="muted" style="white-space: pre-wrap">{{ state.summary.notes_excerpt }}</p>
   </details>
   {% endif %}
   {% if groups %}
