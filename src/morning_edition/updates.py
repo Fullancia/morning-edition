@@ -13,7 +13,9 @@ from zoneinfo import ZoneInfo
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from . import scheduler
 from .config import AppConfig
+from .settings import Settings
 
 log = logging.getLogger("morning_edition.updates")
 
@@ -192,3 +194,29 @@ def run_check(client: httpx.Client, cfg: AppConfig, now: datetime | None = None)
     if info:
         fields.update(latest_sha=info[0], latest_message=info[1], latest_date=info[2])
     return record(cfg.data_dir, **fields)
+
+
+def nightly_update(client: httpx.Client, cfg: AppConfig, s: Settings, build_running: bool,
+                   now: datetime | None = None) -> str:
+    """The overnight job: check, and request an update only if one is available. Skips (and records
+    why) when no updater is set up, an edition is building, or the next edition builds within the hour."""
+    now = now or datetime.now(UTC)
+
+    def finish(note: str) -> str:
+        record(cfg.data_dir, auto_at=now.isoformat(), auto_note=note)
+        log.info("Overnight update: %s", note)
+        return note
+
+    if not configured(cfg):
+        return finish("Skipped, the updater service is not set up.")
+    if build_running:
+        return finish("Skipped, an edition is building.")
+    if scheduler.build_is_imminent(s, now):
+        return finish("Skipped, the next edition builds within the hour.")
+    status = run_check(client, cfg, now)
+    if status.check_result == "error":
+        return finish(f"The check failed, so no update was requested. {status.check_error}")
+    if status.check_result != "update_available":
+        return finish("Up to date.")
+    result = request_update(client, cfg.watchtower_url, cfg.watchtower_token, cfg.app_image, cfg.data_dir, now)
+    return finish("Update requested." if result.started else f"The update request failed. {result.error}")

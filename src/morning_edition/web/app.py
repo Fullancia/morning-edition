@@ -147,6 +147,14 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
                 "Scheduled edition skipped: another build was still running after %d minutes",
                 SCHEDULED_WAIT_SECONDS // 60)
 
+    def nightly_update_job() -> None:
+        conn = db.connect(db_path)
+        try:
+            s = db.load_settings(conn)
+        finally:
+            conn.close()
+        updates.nightly_update(services.http, config, s, pipeline.BUILD_LOCK.locked())
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         cutoff = time.time() - 86400
@@ -157,8 +165,10 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             sched = BackgroundScheduler()
             sched.start()
             conn = db.connect(db_path)
-            scheduler.schedule(sched, db.load_settings(conn), scheduled_job)
+            saved = db.load_settings(conn)
             conn.close()
+            scheduler.schedule(sched, saved, scheduled_job)
+            scheduler.schedule_update(sched, saved, nightly_update_job)
             app.state.scheduler = sched
         yield
         if app.state.scheduler is not None:
@@ -184,6 +194,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
     app.state.start_thread = start_thread
     app.state.run_build = run_build
     app.state.scheduled_job = scheduled_job
+    app.state.nightly_update_job = nightly_update_job
 
     @app.exception_handler(LoginRequired)
     async def _to_login(request: Request, exc: LoginRequired):
@@ -283,6 +294,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             db.save_settings(conn, updated)
             if app.state.scheduler is not None:
                 scheduler.schedule(app.state.scheduler, updated, scheduled_job)
+                scheduler.schedule_update(app.state.scheduler, updated, nightly_update_job)
             return settings_page(request, conn, message="Saved.")
         finally:
             conn.close()

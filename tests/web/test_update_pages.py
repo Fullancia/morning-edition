@@ -166,3 +166,47 @@ def test_saving_a_form_without_the_overnight_fields_keeps_the_saved_values(tmp_p
     client.post("/settings", data=FORM)
     s = db.load_settings(db.connect(app.state.db_path))
     assert s.auto_update is True and s.update_time == "04:00"
+
+
+def test_saving_settings_adds_and_removes_the_nightly_update_job(wired):
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from morning_edition import scheduler
+    app, client = wired
+    sched = BackgroundScheduler()
+    sched.start(paused=True)
+    app.state.scheduler = sched
+    try:
+        client.post("/settings", data={**FORM, "auto_update": "on", "update_time": "03:15"})
+        job = sched.get_job(scheduler.UPDATE_JOB_ID)
+        assert job is not None and (job.next_run_time.hour, job.next_run_time.minute) == (3, 15)
+        client.post("/settings", data={**FORM, "update_time": "03:15"})
+        assert sched.get_job(scheduler.UPDATE_JOB_ID) is None
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_the_nightly_job_checks_the_build_lock_and_the_saved_settings(wired, network):
+    app, client = wired
+    client.post("/settings", data={**FORM, "auto_update": "on", "update_time": "03:15"})
+    route = network.route()
+    assert pipeline.BUILD_LOCK.acquire(blocking=False)
+    try:
+        app.state.nightly_update_job()
+    finally:
+        pipeline.BUILD_LOCK.release()
+    assert not route.called
+    assert "building" in updates.load_status(app.state.config.data_dir).auto_note
+
+
+def test_the_nightly_job_is_scheduled_at_startup_when_saved_on(tmp_path):
+    from morning_edition import scheduler
+    config = AppConfig(data_dir=tmp_path, dashboard_password="hunter2", session_secret="s",
+                       watchtower_url=URL, watchtower_token=TOKEN)
+    services = Services(http=httpx.Client(), llm_factory=lambda s: None, printer=FakePrinter(), rng=random.Random(1))
+    conn = db.connect(tmp_path / "morning-edition.sqlite")
+    db.save_settings(conn, db.load_settings(conn).model_copy(update={"auto_update": True, "update_time": "04:20"}))
+    conn.close()
+    app = create_app(config, services, start_scheduler=True)
+    with TestClient(app):
+        job = app.state.scheduler.get_job(scheduler.UPDATE_JOB_ID)
+        assert job is not None and job.id == scheduler.UPDATE_JOB_ID
