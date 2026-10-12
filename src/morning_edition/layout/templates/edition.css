@@ -1,0 +1,106 @@
+@page { size: 8.5in 11in; margin: 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { color: #000; background: #fff; }
+body { font-family: 'Source Serif 4'; font-size: 9pt; line-height: 12pt; }
+
+.page { position: relative; width: 8.5in; height: 11in; overflow: hidden; break-after: page; }
+.page:last-child { break-after: auto; }
+.region { position: absolute; overflow: hidden; }
+.placed { position: absolute; left: 0; right: 0; }
+.vrule { position: absolute; width: 0; border-left: 0.5pt solid #000; }
+.rule-top { border-top: 1.5pt solid #000; }
+.rule-left { border-left: 0.75pt solid #000; padding-left: 0.14in; }
+
+p { text-align: justify; hyphens: auto; text-indent: 1em; }
+p.first { text-indent: 0; }
+.ragged p { text-align: left; hyphens: manual; text-indent: 0; margin-bottom: 3pt; }
+
+.headline { font-family: 'Libre Caslon Text'; font-weight: 700; line-height: 1.08; }
+.lead-headline { margin-bottom: 4pt; }
+.story-headline { font-size: 15pt; margin-bottom: 2pt; }
+.brief-headline { font-size: 11pt; line-height: 1.15; margin-bottom: 2pt; }
+.good-headline { font-size: 20pt; margin-bottom: 3pt; }
+.deck { font-family: 'Libre Caslon Text'; font-style: italic; font-size: 12.5pt; line-height: 1.2; margin-bottom: 5pt; }
+.deck-small { font-family: 'Libre Caslon Text'; font-style: italic; font-size: 10pt; line-height: 1.25; margin-bottom: 3pt; }
+.kicker, .byline, .src, .label { font-family: 'Libre Franklin'; text-transform: uppercase; letter-spacing: 0.1em; }
+.kicker { font-weight: 800; font-size: 6.5pt; margin-bottom: 2pt; }
+.byline { font-weight: 700; font-size: 6.5pt; margin-bottom: 5pt; }
+.src { font-weight: 700; font-size: 6pt; margin-top: 2pt; }
+.label { font-weight: 800; font-size: 7pt; border-bottom: 1.5pt solid #000; padding-bottom: 2pt; margin-bottom: 5pt; }
+.caption { font-family: 'Libre Franklin'; font-style: italic; font-size: 6.5pt; line-height: 1.3; margin-top: 3pt; }
+.dc { float: left; font-family: 'Libre Caslon Text'; font-weight: 700; font-size: 29pt; line-height: 0.8; padding: 2pt 3pt 0 0; }
+.stack > * + * { margin-top: 0.12in; }
+.also ul { list-style: none; }
+.also li { font-size: 8.5pt; line-height: 11pt; margin-bottom: 3pt; }
+.src-inline { font-family: 'Libre Franklin'; font-size: 6pt; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.masthead { display: flex; align-items: center; justify-content: space-between; border-bottom: 2.5pt solid #000; padding-bottom: 4pt; height: 1in; }
+.ear { width: 1.45in; border: 0.75pt solid #000; padding: 4pt 6pt; font-family: 'Libre Franklin'; }
+.ear.right { text-align: right; }
+.ear-temp { display: flex; align-items: center; gap: 3pt; }
+.ear svg, .outlook-row svg, .wx-sky svg, .wx-moon svg { flex: none; }
+.ear .lbl { font-weight: 800; font-size: 6pt; letter-spacing: 0.06em; text-transform: uppercase; }
+.ear .big { white-space: nowrap; font-weight: 700; font-size: 15pt; line-height: 1.05; }
+.ear .small { font-size: 7pt; line-height: 1.25; }
+.nameplate { flex: 1; text-align: center; font-size: 60pt; line-height: 1; }
+.folio { display: flex; justify-content: space-between; font-family: 'Libre Franklin'; font-weight: 500; font-size: 7pt; letter-spacing: 0.08em; text-transform: uppercase; border-bottom: 0.75pt solid #000; padding: 3pt 0; }
+
+.leadbody { display: flex; gap: 0.16in; }
+.photo-box { width: 2.35in; flex: none; }
+img.photo { display: block; width: 2.35in; border: 0.5pt solid #000; }
+.cols { column-gap: 0.16in; column-rule: 0.5pt solid #000; column-fill: auto; }
+.side { border-left: 0.75pt solid #000; padding-left: 0.14in; }
+.side-block { margin-bottom: 10pt; }
+.cal-row { display: flex; gap: 6pt; margin-bottom: 4pt; font-family: 'Libre Franklin'; }
+.cal-time { font-weight: 700; font-size: 7pt; width: 0.55in; flex: none; padding-top: 1pt; }
+.cal-what { flex: 1; min-width: 0; font-family: 'Source Serif 4'; font-size: 9pt; line-height: 1.2; }
+.cal-more, .index-row { font-family: 'Libre Franklin'; font-size: 8pt; line-height: 1.45; }
+.outlook-row { display: flex; align-items: center; gap: 3pt; border-bottom: 0.5pt solid #000; padding: 2pt 0; font-family: 'Libre Franklin'; font-size: 7.5pt; }
+.outlook-row span:first-of-type { flex: 1; min-width: 0; hyphens: auto; line-height: 1.15; }
+.outlook-temps { white-space: nowrap; }
+.quiet { font-size: 10pt; line-height: 14pt; }
+
+.page-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1.5pt solid #000; padding-bottom: 2pt; font-family: 'Libre Franklin'; font-size: 7pt; letter-spacing: 0.08em; text-transform: uppercase; }
+.mini-nameplate { font-size: 16pt; text-transform: none; letter-spacing: 0; }
+
+.puzzle-row { display: flex; gap: 0.25in; }
+.puzzle-side { flex: 1; }
+.puzzle-grid { border-collapse: collapse; }
+.sudoku td { width: 0.27in; height: 0.27in; border: 0.5pt solid #000; text-align: center; vertical-align: middle; font-family: 'Libre Franklin'; font-weight: 500; font-size: 13pt; }
+.sudoku td.r { border-right-width: 2pt; }
+.sudoku td.b { border-bottom-width: 2pt; }
+.sudoku tr td:first-child { border-left-width: 2pt; }
+.sudoku tr:first-child td { border-top-width: 2pt; }
+.xword td { width: 0.28in; height: 0.28in; border: 0.6pt solid #000; vertical-align: top; padding: 0; }
+.xword td.blk { background: #000; }
+.xword .num { font-family: 'Libre Franklin'; font-size: 5.5pt; line-height: 1; padding: 1pt 0 0 1.5pt; }
+.clues { flex: 1; column-count: 2; column-gap: 0.16in; column-fill: auto; font-size: 8.5pt; line-height: 10.5pt; }
+.clues h4 { font-family: 'Libre Franklin'; font-weight: 800; font-size: 7pt; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 2pt; }
+.clue { margin-bottom: 1.5pt; padding-left: 14pt; text-indent: -14pt; }
+.clue b { display: inline-block; width: 14pt; text-indent: 0; font-family: 'Libre Franklin'; font-weight: 700; font-size: 7.5pt; }
+.answers-box { margin-top: 0.12in; }
+.answers { border-collapse: collapse; }
+.answers td { width: 0.11in; height: 0.11in; border: 0.4pt solid #000; text-align: center; vertical-align: middle; font-family: 'Libre Franklin'; font-size: 5.5pt; line-height: 1; padding: 0; }
+.answers td.blk { background: #000; }
+.otd p { margin-bottom: 5pt; }
+.otd b { font-family: 'Libre Franklin'; font-weight: 700; }
+
+.weather-band { border-bottom: 0.75pt solid #000; }
+.wx-title { display: flex; justify-content: space-between; }
+.wx-title span + span { font-weight: 500; }
+.wx-grid { display: flex; flex-wrap: wrap; height: 0.92in; align-content: flex-start; }
+.wx-cell { width: 25%; height: 0.46in; padding: 2pt 8pt 0 0; font-family: 'Libre Franklin'; }
+.wx-moon { display: flex; align-items: flex-start; gap: 5pt; }
+.wx-moon .wx-value { font-size: 9pt; line-height: 10pt; }
+.wx-label { font-family: 'Libre Franklin'; font-weight: 700; font-size: 6pt; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 1pt; }
+.wx-value { font-family: 'Source Serif 4'; font-size: 10.5pt; line-height: 12pt; }
+.wx-days { display: flex; height: 0.76in; border-top: 0.5pt solid #000; padding-top: 4pt; }
+.wx-day { flex: 1; padding: 0 6pt; border-left: 0.5pt solid #000; }
+.wx-day:first-child { padding-left: 0; border-left: 0; }
+.wx-day .wx-value { font-size: 9pt; line-height: 11pt; }
+.wx-sky { display: flex; align-items: center; gap: 4pt; margin-top: 1pt; }
+.wx-icon { flex: none; width: 0.4in; height: 0.4in; }
+.wx-text { flex: 1; min-width: 0; }
+.wx-summary { hyphens: auto; }
+.wx-temps { white-space: nowrap; }
+.wx-pop { font-family: 'Libre Franklin'; font-size: 7pt; line-height: 10pt; }

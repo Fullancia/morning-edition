@@ -1,0 +1,27 @@
+{% macro lead_header(p) %}<div class="lead-header"><h1 class="headline lead-headline" style="font-size: {{ p.size }}pt">{{ p.headline }}</h1>{% if p.deck %}<div class="deck">{{ p.deck }}</div>{% endif %}<div class="byline">{{ p.section }} &middot; Condensed from {{ p.source }}</div></div>{% endmacro %}
+
+{% macro lead_first(text) %}<p class="first"><span class="dc">{{ text[0] }}</span>{{ text[1:] }}</p>{% endmacro %}
+
+{% macro para(text) %}<p class="first">{{ text }}</p>{% endmacro %}
+
+{% macro para_ragged(text) %}<p class="first">{{ text }}</p>{% endmacro %}
+
+{% macro story_header(p) %}<div class="story-header"><div class="kicker">{{ p.section }}</div><h2 class="headline story-headline">{{ p.headline }}</h2>{% if p.deck %}<div class="deck-small">{{ p.deck }}</div>{% endif %}<div class="byline">Condensed from {{ p.source }}</div></div>{% endmacro %}
+
+{% macro good_header(p) %}<div class="good-header"><div class="kicker">{{ "Good News" if p.kind == "good_news" else p.section }}</div><h2 class="headline good-headline">{{ p.headline }}</h2>{% if p.deck %}<div class="deck-small">{{ p.deck }}</div>{% endif %}<div class="byline">Condensed from {{ p.source }}</div></div>{% endmacro %}
+
+{% macro story(p) %}<article class="piece">{{ story_header(p) }}{% for t in p.paragraphs %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</article>{% endmacro %}
+
+{% macro brief_head(p) %}<div class="kicker">{{ p.section }}</div><h3 class="headline brief-headline">{{ p.headline }}</h3>{% endmacro %}
+
+{% macro brief(p) %}<article class="piece brief">{{ brief_head(p) }}{% for t in p.paragraphs %}<p class="first">{{ t }}</p>{% endfor %}<div class="src">{{ p.source }}</div></article>{% endmacro %}
+
+{% macro also(items) %}<article class="piece also"><div class="kicker">Also in the news</div><ul>{% for i in items %}<li>{{ i.title }} <span class="src-inline">{{ i.source }}</span></li>{% endfor %}</ul></article>{% endmacro %}
+
+{% macro block(b) %}{% if b.type == "also" %}{{ also(b["items"]) }}{% elif b.type == "brief" %}{{ brief(b.piece) }}{% else %}{{ story(b.piece) }}{% endif %}{% endmacro %}
+
+{% macro block_head(b) %}{% if b.type == "also" %}<div class="kicker">Also in the news</div>{% elif b.type == "brief" %}{{ brief_head(b.piece) }}{% else %}{{ story_header(b.piece) }}{% endif %}{% endmacro %}
+
+{% macro side(d) %}<div class="side-block"><div class="label">Your Day</div>{% for e in d.events %}<div class="cal-row"><div class="cal-time">{{ e.label }}</div><div class="cal-what">{{ e.title }}</div></div>{% endfor %}{% if d.more %}<div class="cal-more">and {{ d.more }} more</div>{% endif %}{% if not d.events %}<div class="cal-what">Nothing on the calendar.</div>{% endif %}</div>{% if d.index %}<div class="side-block"><div class="label">Inside</div>{% for name, page in d.index %}<div class="index-row"><b>{{ name }}</b> &middot; Page {{ page }}</div>{% endfor %}</div>{% endif %}{% if d.outlook %}<div class="side-block"><div class="label">Outlook</div>{% for o in d.outlook %}<div class="outlook-row"><b>{{ o.day.strftime("%a") }}</b>{{ icon(kind_for_code(o.code), "0.17in") }}<span>{{ o.summary }}</span><span class="outlook-temps">{{ o.high }}{{ d.deg }} / {{ o.low }}{{ d.deg }}</span></div>{% endfor %}</div>{% endif %}{% endmacro %}
+
+{% macro text_probe(d) %}<span data-measure-width="{{ d.key }}" style="display: inline-block; white-space: nowrap; font-family: '{{ d.font }}'; font-weight: {{ d.weight }}; font-size: {{ d.size }}pt; line-height: 1">{{ d.text }}</span>{% endmacro %}

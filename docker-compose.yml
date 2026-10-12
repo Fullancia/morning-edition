@@ -1,0 +1,12 @@
+services:
+  morning-edition:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    env_file: .env
+    environment:
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./data:/data

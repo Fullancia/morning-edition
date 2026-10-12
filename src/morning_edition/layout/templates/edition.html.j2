@@ -1,0 +1,167 @@
+{% import "pieces.html.j2" as m %}
+{% macro page_header(page_number) %}
+<div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.MARGIN_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.HEADER_H - 0.06 }}in">
+  <div class="page-header"><span class="mini-nameplate">{{ s.paper_name }}</span><span>{{ date_label }}</span><span>Page {{ page_number }}</span></div>
+</div>
+{% endmacro %}
+{% macro answers_box(a) %}
+<div class="answers-box"><div class="label">Yesterday's {{ a.kind }}</div>
+<table class="answers">{% for row in a.rows %}<tr>{% for ch in row %}<td class="{{ 'blk' if ch == '#' else '' }}">{{ '' if ch == '#' else ch }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+{% endmacro %}
+{% macro band(w) %}
+{% set d = w.details %}
+<div class="region weather-band" style="left: {{ g.MARGIN_X }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.WEATHER_BAND_H }}in">
+  <div class="label wx-title"><span>Weather</span><span>{{ s.home.label }}</span></div>
+  <div class="wx-grid">
+    <div class="wx-cell"><div class="wx-label">Air quality</div><div class="wx-value">{% if d.aqi is not none %}{{ d.aqi }}, {{ d.aqi_category }}{% else %}n/a{% endif %}</div></div>
+    <div class="wx-cell"><div class="wx-label">Pressure</div><div class="wx-value">{{ d.pressure_text }}</div></div>
+    <div class="wx-cell"><div class="wx-label">Humidity</div><div class="wx-value">{{ d.humidity_text }}</div></div>
+    <div class="wx-cell"><div class="wx-label">Sunrise / Sunset</div><div class="wx-value">{{ d.sunrise }} / {{ d.sunset }}</div></div>
+    <div class="wx-cell"><div class="wx-label">UV index max</div><div class="wx-value">{{ d.uv_text }}</div></div>
+    <div class="wx-cell"><div class="wx-label">Visibility</div><div class="wx-value">{{ d.visibility_text }}</div></div>
+    <div class="wx-cell"><div class="wx-label">Rain past 24 h</div><div class="wx-value">{{ d.precip_text }}</div></div>
+    <div class="wx-cell wx-moon">{{ moon(d.moon_illumination / 100, d.moon_waxing, "0.42in") }}<div class="wx-moon-text"><div class="wx-label">Moon phase</div><div class="wx-value">{{ d.moon_phase }}, {{ d.moon_illumination }}%</div></div></div>
+  </div>
+  <div class="wx-days">
+    {% for o in w.outlook[:5] %}
+    <div class="wx-day"><div class="wx-label">{{ o.day.strftime("%a") }}</div><div class="wx-value wx-summary">{{ o.summary }}</div><div class="wx-sky"><div class="wx-icon">{{ icon(kind_for_code(o.code), "0.4in") }}</div><div class="wx-text"><div class="wx-value wx-temps"><b>{{ o.high }}{{ deg }} / {{ o.low }}{{ deg }}</b></div><div class="wx-pop">{{ o.precip_chance }}% precip</div></div></div></div>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="{{ fonts_css }}">
+<link rel="stylesheet" href="{{ edition_css }}">
+<style>.nameplate, .mini-nameplate { font-family: '{{ s.masthead_font }}'; font-weight: {{ masthead_weight }}; }</style>
+</head>
+<body>
+
+<section class="page">
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.MARGIN_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.MASTHEAD_H }}in">
+    <div class="masthead">
+      <div class="ear">
+        <div class="lbl">{{ s.home.label or "Weather" }}</div>
+        {% if weather %}
+        <div class="ear-temp">{{ icon(kind_for_code(weather.today.code), "0.3in") }}<div class="big" style="font-size: {{ ear_temp_size }}pt">{{ ear_temp }}</div></div>
+        <div class="small">{{ weather.today.summary }}. {{ weather.wind }}.</div>
+        {% else %}
+        <div class="small">Weather unavailable today.</div>
+        {% endif %}
+      </div>
+      <div class="nameplate" style="font-size: {{ nameplate_size }}pt">{{ s.paper_name }}</div>
+      <div class="ear right">
+        <div class="lbl">Today's Puzzle</div>
+        <div class="big">{{ puzzle_name }}</div>
+        <div class="small">Page {{ back_page }}{% if answers %}, with yesterday's answers{% endif %}.</div>
+      </div>
+    </div>
+    <div class="folio"><span>{{ date_label }}</span><span>{{ s.home.label }}</span><span>No. {{ number }}</span></div>
+  </div>
+
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.LEAD_W }}in; height: {{ g.FRONT_TOP_H }}in">
+  {% if lead %}
+    {{ m.lead_header(lead.head) }}
+    <div class="leadbody">
+      {% if lead.photo %}
+      <div class="photo-box"><img class="photo" src="{{ lead.photo.src }}" style="height: {{ lead.photo.height }}in"><div class="caption">{{ lead.photo.caption }}</div></div>
+      {% endif %}
+      <div class="cols" style="column-count: {{ lead.ncols }}; height: {{ lead.text_h }}in; flex: 1">
+        {% for t in lead.top %}{% if loop.first %}{{ m.lead_first(t) }}{% else %}<p>{{ t }}</p>{% endif %}{% endfor %}
+      </div>
+    </div>
+  {% else %}
+    <h1 class="headline lead-headline" style="font-size: 28pt">A Quiet News Day</h1>
+    <p class="first quiet">Your feeds had nothing new this morning. The weather, your calendar, and today's puzzle are all here.</p>
+  {% endif %}
+  </div>
+
+  <div class="region side" style="left: {{ g.SIDE_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.SIDE_W }}in; height: {{ g.FRONT_TOP_H }}in">
+    {{ m.side(side) }}
+  </div>
+
+  <div class="region rule-top" style="left: {{ g.MARGIN_X }}in; top: {{ g.FOLD + 0.03 }}in; width: {{ g.CONTENT_W }}in; height: 0"></div>
+
+  {% if lead and lead.cont %}
+  <div class="region ragged" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.CONT_TEXT_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+    <div class="kicker">Continued from above</div>
+    {% for t in lead.cont %}<p>{{ t }}</p>{% endfor %}
+  </div>
+  <div class="vrule" style="left: {{ g.MARGIN_X + g.CONT_W + g.REGION_GAP / 2 }}in; top: {{ g.FRONT_BOTTOM_Y }}in; height: {{ g.FRONT_BOTTOM_H }}in"></div>
+  {% endif %}
+
+  {% if story2 %}
+  <div class="region" style="left: {{ g.STORY2_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.STORY2_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+    {{ m.story_header(story2.head) }}
+    <div class="cols" style="column-count: 2; height: {{ story2.text_h }}in">{% for t in story2.paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  {% if front_briefs %}
+  <div class="region ragged rule-left" style="left: {{ g.BRIEFS_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.BRIEFS_W }}in; height: {{ g.FRONT_BOTTOM_H }}in">
+    <div class="label">Briefs</div>
+    <div class="stack">{% for p in front_briefs %}{{ m.brief(p) }}{% endfor %}</div>
+  </div>
+  {% endif %}
+</section>
+
+{% for page in inside_pages %}
+{% set page_number = loop.index + 1 %}
+{% set offset = band_offset if (loop.first and weather_band) else 0 %}
+<section class="page">
+  {{ page_header(page_number) }}
+  {% if offset %}{{ band(weather) }}{% endif %}
+  {% for col in page %}
+  <div class="region" style="left: {{ g.inside_col_x(loop.index0) }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.INSIDE_COL_W }}in; height: {{ g.INSIDE_H }}in">
+    {% for b in col %}<div class="placed" style="top: {{ b.top }}in">{{ m.block(b) }}</div>{% endfor %}
+  </div>
+  {% if not loop.first and col %}<div class="vrule" style="left: {{ g.inside_col_x(loop.index0) - g.GUTTER / 2 }}in; top: {{ g.INSIDE_Y + offset }}in; height: {{ g.INSIDE_H - offset }}in"></div>{% endif %}
+  {% endfor %}
+</section>
+{% endfor %}
+
+<section class="page">
+  {{ page_header(back_page) }}
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.GOOD_W }}in; height: {{ g.BACK_TOP_H }}in">
+  {% if good %}
+    {{ m.good_header(good.head) }}
+    <div class="cols" style="column-count: 3; height: {{ good.text_h }}in">{% for t in good.paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>
+  {% endif %}
+  </div>
+  <div class="region side" style="left: {{ g.SIDE_X }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.SIDE_W }}in; height: {{ g.BACK_TOP_H }}in">
+    {% if otd %}<div class="label">On This Day</div><div class="otd ragged">{% for i in otd %}<p><b>{{ i.year }}</b> {{ i.text }}</p>{% endfor %}</div>{% endif %}
+  </div>
+  <div class="region rule-top" style="left: {{ g.MARGIN_X }}in; top: {{ g.FOLD + 0.03 }}in; width: {{ g.CONTENT_W }}in; height: 0"></div>
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.PUZZLE_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.PUZZLE_H }}in">
+  {% if puzzle and puzzle.kind == "sudoku" %}
+    <div class="puzzle-row">
+      <table class="puzzle-grid sudoku">
+      {% for row in puzzle.sudoku.givens %}{% set r = loop.index0 %}<tr>{% for v in row %}{% set c = loop.index0 %}<td class="{{ 'r' if c in (2, 5) else '' }} {{ 'b' if r in (2, 5) else '' }}">{{ v if v else '' }}</td>{% endfor %}</tr>{% endfor %}
+      </table>
+      <div class="puzzle-side">
+        <div class="label">Sudoku</div>
+        <p class="first">Fill the grid so every row, every column, and every 3 by 3 box contains the digits 1 through 9.</p>
+        {% if answers %}{{ answers_box(answers) }}{% endif %}
+      </div>
+    </div>
+  {% elif puzzle and puzzle.kind == "crossword" %}
+    <div class="puzzle-row">
+      <div>
+        <table class="puzzle-grid xword">
+        {% for row in xword.cells %}<tr>{% for cell in row %}{% if cell.block %}<td class="blk"></td>{% else %}<td>{% if cell.number %}<div class="num">{{ cell.number }}</div>{% endif %}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+        </table>
+        {% if answers %}{{ answers_box(answers) }}{% endif %}
+      </div>
+      <div class="clues" style="height: {{ g.PUZZLE_H }}in">
+        <h4>Across</h4>{% for n, clue in xword.across %}<div class="clue"><b>{{ n }}</b>{{ clue }}</div>{% endfor %}
+        <h4>Down</h4>{% for n, clue in xword.down %}<div class="clue"><b>{{ n }}</b>{{ clue }}</div>{% endfor %}
+      </div>
+    </div>
+  {% endif %}
+  </div>
+</section>
+
+</body>
+</html>

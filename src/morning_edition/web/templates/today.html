@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block head %}{% if building %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block title %}Today{% endblock %}
+{% block body %}
+<h1>{{ s.paper_name }}</h1>
+<p class="status">
+  {% if building %}<span class="badge">Building now</span> This page refreshes on its own.
+  {% elif next_run %}Next edition builds {{ next_run.strftime("%A at %-I:%M %p") }}{% if s.auto_print %} and prints when it is ready, around {{ s.print_time }}{% endif %}.
+  {% endif %}
+</p>
+<form method="post" action="/build"><button{% if building %} disabled{% endif %}>Build a preview now</button></form>
+<p class="muted">Previews are not printed. Use Print on the archive page to print one.</p>
+
+{% if ed %}
+<h2>Today's paper</h2>
+{% if paper %}
+<div class="paper">
+  {% for group in paper %}
+  <h3>{{ group.name }}</h3>
+  <ul>
+    {% for e in group.entries %}
+    <li><span class="headline">{{ e.headline }}</span>{% if e.source %} <span class="muted">{{ e.source }}</span>{% endif %}{% if e.href %} <a href="{{ e.href }}" target="_blank" rel="noopener noreferrer">Read the original</a>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endfor %}
+</div>
+{% elif not building %}
+<p class="muted">No stories in this edition yet. Add feeds in <a href="/settings#feeds">Settings</a>.</p>
+{% endif %}
+<h2>No. {{ ed.number }}, {{ ed.date }} <span class="badge {{ ed.status }}">{{ ed.status | replace("_", " ") }}</span>{% if ed.is_preview %} <span class="badge preview">preview</span>{% endif %}</h2>
+<table class="log">
+  {% for e in ed.log %}<tr><td>{{ e.step }}</td><td><span class="badge {{ e.status }}">{{ e.status }}</span></td><td>{{ e.message }}</td></tr>{% endfor %}
+</table>
+{% if ed.pdf_path %}
+<p><a href="/editions/{{ ed.id }}/pdf" target="_blank">Open the PDF</a></p>
+<iframe class="preview" src="/editions/{{ ed.id }}/pdf" title="Edition {{ ed.number }}"></iframe>
+{% endif %}
+{% else %}
+<p>No editions yet. Add a few feeds in Settings, then build a preview.</p>
+{% endif %}
+{% endblock %}

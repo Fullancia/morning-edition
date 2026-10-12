@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block body %}
+<h1>Settings</h1>
+{% if message %}<p class="ok">{{ message }}</p>{% endif %}
+{% if error %}<pre class="error">{{ error }}</pre>{% endif %}
+{% if next_run %}<p class="muted">Next edition builds {{ next_run.strftime("%A at %-I:%M %p") }}.</p>{% endif %}
+
+<form method="post" action="/settings" class="stack" id="settings-form">
+  <h2>The paper</h2>
+  <label>Paper name <input name="paper_name" value="{{ s.paper_name }}" required></label>
+  <fieldset class="fonts">
+    <legend>Masthead font</legend>
+    {% for f in fonts %}
+    <label class="font-option"><input type="radio" name="masthead_font" value="{{ f }}"{% if f == s.masthead_font %} checked{% endif %}><span class="font-preview" style="font-family: '{{ f }}'; font-weight: {{ font_weights[f] }}">{{ s.paper_name }}</span><span class="font-name">{{ f }}</span></label>
+    {% endfor %}
+  </fieldset>
+  <label>Sections, in page order <input name="sections" value="{{ s.sections | join(', ') }}"></label>
+  <label>What you care about <textarea name="interests" rows="3" placeholder="sailing, local politics, space">{{ s.interests }}</textarea></label>
+  <button>Save settings</button>
+
+  <h2>Weather</h2>
+  <label>Home location <input name="home_location" value="{{ s.home.query }}" placeholder="Town, State ZIP"></label>
+  {% if s.home.label %}<p class="muted">Weather for {{ s.home.label }}.</p>{% endif %}
+  <label>Units
+    <select name="weather_units">{% for v, t in [("us", "US (Fahrenheit, mph, inches, miles)"), ("metric", "Metric (Celsius, km/h, millimeters, kilometers)")] %}<option value="{{ v }}"{% if v == s.weather_units %} selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+  </label>
+  <label class="check"><input type="checkbox" name="expanded_weather"{% if s.expanded_weather %} checked{% endif %}> Expanded weather on page 2 (sunrise, moon, rain, air quality, 5-day forecast)</label>
+  <button>Save settings</button>
+
+  <h2>Where and when</h2>
+  <label>Timezone
+    <select name="timezone">
+      <optgroup label="United States">{% for z, label in us_timezones %}<option value="{{ z }}"{% if z == s.timezone %} selected{% endif %}>{{ label }}</option>{% endfor %}</optgroup>
+      <optgroup label="All timezones">{% for z in timezones %}<option value="{{ z }}"{% if z == s.timezone %} selected{% endif %}>{{ z }}</option>{% endfor %}</optgroup>
+    </select>
+  </label>
+  <label>Print time <input type="time" name="print_time" value="{{ s.print_time }}"></label>
+  <label class="check"><input type="checkbox" name="auto_print"{% if s.auto_print %} checked{% endif %}> Print automatically each morning</label>
+  <label>Usual sheets <input type="number" name="target_sheets" min="1" max="6" value="{{ s.target_sheets }}"></label>
+  <label>Most sheets on a heavy news day <input type="number" name="max_sheets" min="1" max="6" value="{{ s.max_sheets }}"></label>
+  <button>Save settings</button>
+
+  <h2>Puzzle</h2>
+  <label>Puzzle
+    <select name="puzzle_mode">{% for v, t in [("alternate", "Alternate sudoku and crossword"), ("sudoku", "Sudoku only"), ("crossword", "Crossword only")] %}<option value="{{ v }}"{% if v == s.puzzle_mode %} selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+  </label>
+  <label>Sudoku difficulty
+    <select name="sudoku_difficulty">{% for v in ["easy", "medium", "hard"] %}<option value="{{ v }}"{% if v == s.sudoku_difficulty %} selected{% endif %}>{{ v | title }}</option>{% endfor %}</select>
+  </label>
+  <button>Save settings</button>
+
+  <h2>Printer and writing</h2>
+  <label>Printer address <input name="printer_address" value="{{ s.printer_address }}" placeholder="192.168.1.50"></label>
+  <label>Photo brightness (lower is lighter) <input type="number" step="0.05" min="0.2" max="1.5" name="halftone_gamma" value="{{ s.halftone_gamma }}"></label>
+  <label>Claude model
+    <select name="model">{% for v, t in models %}<option value="{{ v }}"{% if v == s.model %} selected{% endif %}>{{ t }}</option>{% endfor %}</select>
+  </label>
+  <label>Effort
+    <select name="effort">{% for v in ["low", "medium", "high", "xhigh", "max"] %}<option value="{{ v }}"{% if v == s.effort %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+  </label>
+  <button>Save settings</button>
+</form>
+<div class="savebar" id="savebar" hidden>
+  <div class="savebar-inner">
+    <span>Unsaved changes</span>
+    <button type="submit" form="settings-form">Save settings</button>
+  </div>
+</div>
+<script>
+  // Live masthead previews: mirror the paper name into each font option (textContent only).
+  (function () {
+    var input = document.querySelector('input[name="paper_name"]');
+    if (!input) return;
+    input.addEventListener('input', function () {
+      document.querySelectorAll('.font-preview').forEach(function (el) { el.textContent = input.value; });
+    });
+  })();
+  // Unsaved changes bar: appears once anything in the main settings form is edited.
+  (function () {
+    var form = document.getElementById('settings-form');
+    var bar = document.getElementById('savebar');
+    if (!form || !bar) return;
+    function show() {
+      bar.hidden = false;
+      document.body.classList.add('has-changes');
+    }
+    form.addEventListener('input', show);
+    form.addEventListener('change', show);
+  })();
+</script>
+
+<h2 id="calendars">Calendars</h2>
+{% if s.calendars %}
+<table class="feeds">
+  {% for c in s.calendars %}
+  <tr>
+    <td>{{ c.name }}</td>
+    <td class="muted">link saved</td>
+    <td><form method="post" action="/calendars/{{ loop.index0 }}/delete"><button class="link">Remove</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}<p class="muted">No calendars yet. Add a private iCal link and today's events print on the front page.</p>{% endif %}
+<form method="post" action="/calendars" class="stack">
+  <label>Name <input name="name" placeholder="Optional"></label>
+  <label>Private iCal link <input name="url" placeholder="https://calendar.google.com/calendar/ical/..." autocomplete="off" required></label>
+  <button>Add calendar</button>
+</form>
+
+<h2>Test print</h2>
+<p class="muted">Sends a one-page test to the printer address saved above.</p>
+<form method="post" action="/printer/test"><button>Test print</button></form>
+
+<h2 id="feeds">Feeds</h2>
+<table class="feeds">
+  {% for f in feeds %}
+  <tr class="{{ '' if f.enabled else 'off' }}">
+    <td>{{ f.section }}{% if f.headlines_only %} <span class="muted">(headlines only)</span>{% endif %}</td>
+    <td class="url">{{ f.url }}</td>
+    <td><form method="post" action="/feeds/{{ f.id }}/toggle"><button class="link">{{ "Pause" if f.enabled else "Resume" }}</button></form></td>
+    <td><form method="post" action="/feeds/{{ f.id }}/delete"><button class="link">Remove</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+<form method="post" action="/feeds" class="row">
+  <input name="url" placeholder="https://example.com/feed" required>
+  <select name="section">{% for sec in sections %}<option value="{{ sec }}">{{ sec }}</option>{% endfor %}</select>
+  <button>Add feed</button>
+</form>
+{% if s.home.label or s.home.query %}
+<form method="post" action="/feeds/google-news"><button class="link">Add a Google News feed for {{ s.home.label or s.home.query }} (headlines only)</button></form>
+{% endif %}
+{% endblock %}

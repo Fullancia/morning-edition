@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head %}{% endblock %}
+<title>{% block title %}Morning Edition{% endblock %}</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+{% if request.session.get("auth") %}
+<nav class="topbar">
+  <a class="brand" href="/">Morning Edition</a>
+  <a href="/">Today</a><a href="/editions">Archive</a><a href="/settings">Settings</a>
+  <form method="post" action="/logout"><button class="link">Log out</button></form>
+</nav>
+{% endif %}
+<main>{% block body %}{% endblock %}</main>
+</body>
+</html>

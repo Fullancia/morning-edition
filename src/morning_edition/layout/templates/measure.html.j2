@@ -1,0 +1,11 @@
+{% import "pieces.html.j2" as m %}
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="{{ fonts_css }}">
+<link rel="stylesheet" href="{{ edition_css }}">
+<style>@page { size: 8.5in 400in; margin: 0; }</style>
+</head><body>
+{% for key, width, macro, payload in items %}
+<div class="{{ 'ragged' if macro in ('brief', 'para_ragged') else '' }}" data-measure="{{ key }}" style="width: {{ width }}in">{{ m[macro](payload) }}</div>
+{% endfor %}
+</body></html>

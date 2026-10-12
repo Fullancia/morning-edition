@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Archive{% endblock %}
+{% block body %}
+<h1>Archive</h1>
+<table class="log">
+  {% for ed in editions %}
+  <tr>
+    <td>No. {{ ed.number }}</td><td>{{ ed.date }}</td>
+    <td><span class="badge {{ ed.status }}">{{ ed.status | replace("_", " ") }}</span>{% if ed.is_preview %} <span class="badge preview">preview</span>{% endif %}</td>
+    <td>{% if ed.pdf_path %}<a href="/editions/{{ ed.id }}/pdf" target="_blank">PDF</a>{% endif %}</td>
+    <td>{% if ed.pdf_path %}<form method="post" action="/editions/{{ ed.id }}/print"><button class="link">Print</button></form>{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td>No editions yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

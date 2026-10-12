@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<link rel="stylesheet" href="{{ fonts_css }}">
+<link rel="stylesheet" href="{{ edition_css }}">
+<style>.nameplate { font-family: '{{ s.masthead_font }}'; font-weight: {{ masthead_weight }}; }</style>
+</head><body>
+<section class="page">
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.MARGIN_Y }}in; width: {{ g.CONTENT_W }}in; height: {{ g.MASTHEAD_H }}in">
+    <div class="masthead"><div class="nameplate" style="font-size: {{ nameplate_size }}pt">{{ s.paper_name }}</div></div>
+    <div class="folio"><span>Printer test page</span><span>{{ when }}</span><span>8.5 x 11, actual size</span></div>
+  </div>
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.LEAD_W }}in; height: 3.6in">
+    <h1 class="headline lead-headline" style="font-size: 28pt">If You Can Read This, Printing Works</h1>
+    <div class="deck">The text below is 9 point, the size the paper uses.</div>
+    <div class="cols" style="column-count: 2; height: 2.2in">{% for i in range(6) %}<p{% if loop.first %} class="first"{% endif %}>The quick brown fox jumps over the lazy dog while the harbor fills with sailboats and the ferry pulls away from the landing.</p>{% endfor %}</div>
+  </div>
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: 6in; width: {{ g.CONTENT_W }}in; height: 1in">
+    <div class="label">Check</div>
+    <p class="first">The masthead should sit 0.4 inches from the top edge with 0.45 inch side margins. Larger margins mean the print queue is scaling the page.</p>
+  </div>
+</section>
+</body></html>
