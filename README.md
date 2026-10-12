@@ -12,7 +12,7 @@ Morning Edition is a self-hosted personal newspaper, written with Claude and pri
 
 1. Clone the repository and enter the directory:
    ```bash
-   git clone https://github.com/Fullancia/morning-edition.git
+   git clone https://github.com/rickgram/morning-edition.git
    cd morning-edition
    ```
 
