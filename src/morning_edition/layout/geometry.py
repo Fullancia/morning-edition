@@ -22,24 +22,23 @@ SIDE_W = 1.75
 SIDE_X = MARGIN_X + CONTENT_W - SIDE_W
 LEAD_W = CONTENT_W - SIDE_W - REGION_GAP
 LEAD_HEADER_MAX = 1.5
-PHOTO_W = 2.35
-PHOTO_MIN_H, PHOTO_MAX_H = 1.0, 1.6
-CAPTION_H = 0.3
-LEAD_TEXT_W_PHOTO = (LEAD_W - PHOTO_W - 2 * GUTTER) / 2
-LEAD_TEXT_W_NOPHOTO = (LEAD_W - 2 * GUTTER) / 3
+LEAD_COL_W = (LEAD_W - 2 * GUTTER) / 3    # the lead and the second story run in three equal text columns
+PHOTO_W = 2 * LEAD_COL_W + GUTTER          # the photo spans the lead's second and third columns
+PHOTO_MIN_H, PHOTO_MAX_H = 1.3, 2.0
+CAPTION_H = 2 * LINE                       # room kept under the photo for its one-line caption
+LEAD_HEAD_GAP = 0.02                       # between the lead's headline block and its text
+WIDE_COLS = 4                              # with no right-hand column, the second story spans the page in four columns
+WIDE_COL_W = (CONTENT_W - (WIDE_COLS - 1) * GUTTER) / WIDE_COLS
+STORY2_MIN_H = 1.8                         # the second story keeps at least this much of the front page
+STORY2_TARGET_MAX_H = 2.6                  # ...and is not given more than this while it would crowd the lead
 FRONT_BOTTOM_Y = FOLD + 0.12
 FRONT_BOTTOM_H = PAGE_H - MARGIN_Y - FRONT_BOTTOM_Y
 INDEX_STRIP_H = 0.24                       # the one-line "Inside" index along the foot of the front page
 INDEX_STRIP_Y = PAGE_H - MARGIN_Y - INDEX_STRIP_H
 INDEX_STRIP_GAP = 0.08                     # air between the below-fold regions and the strip's rule
-CONT_W = 1.75
-CONT_TEXT_W = CONT_W - GUTTER
 BRIEFS_W = 1.75
 BRIEFS_X = MARGIN_X + CONTENT_W - BRIEFS_W
 BRIEFS_TEXT_W = BRIEFS_W - 0.14
-STORY2_X = MARGIN_X + CONT_W + REGION_GAP
-STORY2_W = CONTENT_W - CONT_W - BRIEFS_W - 2 * REGION_GAP
-STORY2_COL_W = (STORY2_W - GUTTER) / 2
 
 # Inside pages
 HEADER_H = 0.35
@@ -64,6 +63,10 @@ INSIDE_FOLD_AT = FOLD - INSIDE_Y           # fold offset within an inside column
 def front_bottom_h(has_strip: bool) -> float:
     """Height of the below-fold front-page regions: full height, or shortened to leave room for the index strip."""
     return FRONT_BOTTOM_H - (INDEX_STRIP_H + INDEX_STRIP_GAP if has_strip else 0.0)
+
+
+def lead_col_x(i: int) -> float:
+    return MARGIN_X + i * (LEAD_COL_W + GUTTER)
 
 
 def inside_col_x(i: int) -> float:

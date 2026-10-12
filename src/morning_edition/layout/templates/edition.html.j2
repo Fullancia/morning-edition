@@ -61,48 +61,51 @@
     <div class="folio"><span>{{ date_label }}</span><span>{{ s.home.label }}</span><span>No. {{ number }}</span></div>
   </div>
 
-  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.LEAD_W }}in; height: {{ g.FRONT_TOP_H }}in">
+  {% macro flow_windows(story, macro) %}
+  {% for c in story.cols %}
+  <div class="region col-win" style="left: {{ c.x }}in; top: {{ c.y }}in; width: {{ c.w }}in; height: {{ c.h }}in"><div style="margin-top: -{{ c.y0 }}in">{{ macro(story.paras) }}</div></div>
+  {% endfor %}
+  {% for r in story.rules %}<div class="vrule" style="left: {{ r.x }}in; top: {{ r.y }}in; height: {{ r.h }}in"></div>{% endfor %}
+  {% endmacro %}
+
   {% if lead %}
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.LEAD_W }}in; height: {{ lead.head_h }}in">
     {{ m.lead_header(lead.head) }}
-    <div class="leadbody">
-      {% if lead.photo %}
-      <div class="photo-box"><img class="photo" src="{{ lead.photo.src }}" style="height: {{ lead.photo.height }}in"><div class="caption">{{ lead.photo.caption }}</div></div>
-      {% endif %}
-      <div class="cols" style="column-count: {{ lead.ncols }}; height: {{ lead.text_h }}in; flex: 1">
-        {% for t in lead.top %}{% if loop.first %}{{ m.lead_first(t) }}{% else %}<p>{{ t }}</p>{% endif %}{% endfor %}
-      </div>
-    </div>
+  </div>
+  {% if lead.photo %}
+  <div class="region photo-box" style="left: {{ lead.photo.x }}in; top: {{ lead.photo.y }}in; width: {{ lead.photo.w }}in; height: {{ lead.photo.block_h }}in"><img class="photo" src="{{ lead.photo.src }}" style="width: {{ lead.photo.w }}in; height: {{ lead.photo.height }}in"><div class="caption">{{ lead.photo.caption }}</div></div>
+  {% endif %}
+  {{ flow_windows(lead, m.lead_flow) }}
   {% else %}
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.LEAD_W }}in; height: {{ g.FRONT_TOP_H }}in">
     <h1 class="headline lead-headline" style="font-size: 28pt">A Quiet News Day</h1>
     <p class="first quiet">Your feeds had nothing new this morning. The weather, your calendar, and today's puzzle are all here.</p>
-  {% endif %}
   </div>
+  {% endif %}
 
   <div class="region side" style="left: {{ g.SIDE_X }}in; top: {{ g.FRONT_TOP_Y }}in; width: {{ g.SIDE_W }}in; height: {{ g.FRONT_TOP_H }}in">
     {{ m.side(side) }}
   </div>
 
-  <div class="region rule-top" style="left: {{ g.MARGIN_X }}in; top: {{ g.FOLD + 0.03 }}in; width: {{ g.CONTENT_W }}in; height: 0"></div>
-
-  {% if lead and lead.cont %}
-  <div class="region ragged" style="left: {{ g.MARGIN_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.CONT_TEXT_W }}in; height: {{ bottom_h }}in">
-    <div class="kicker">Continued from above</div>
-    {% for t in lead.cont %}<p>{{ t }}</p>{% endfor %}
-  </div>
-  <div class="vrule" style="left: {{ g.MARGIN_X + g.CONT_W + g.REGION_GAP / 2 }}in; top: {{ g.FRONT_BOTTOM_Y }}in; height: {{ bottom_h }}in"></div>
-  {% endif %}
+  <div class="region rule-top" style="left: {{ g.SIDE_X }}in; top: {{ g.FOLD + 0.03 }}in; width: {{ g.SIDE_W }}in; height: 0"></div>
 
   {% if story2 %}
-  <div class="region" style="left: {{ g.STORY2_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.STORY2_W }}in; height: {{ bottom_h }}in">
+  <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ story2.head_y }}in; width: {{ story2.head_w }}in; height: {{ story2.head_h }}in">
     {{ m.story_header(story2.head) }}
-    <div class="cols" style="column-count: 2; height: {{ story2.text_h }}in">{% for t in story2.paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>
   </div>
+  {{ flow_windows(story2, m.story_flow) }}
   {% endif %}
 
   {% if front_briefs %}
   <div class="region ragged rule-left" style="left: {{ g.BRIEFS_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.BRIEFS_W }}in; height: {{ bottom_h }}in">
     <div class="label">Briefs</div>
     <div class="stack">{% for p in front_briefs %}{{ m.brief(p) }}{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  {% if front_also %}
+  <div class="region ragged rule-left" style="left: {{ g.BRIEFS_X }}in; top: {{ g.FRONT_BOTTOM_Y }}in; width: {{ g.BRIEFS_W }}in; height: {{ bottom_h }}in">
+    {{ m.also_side(front_also) }}
   </div>
   {% endif %}
 
@@ -121,7 +124,7 @@
   {% if offset %}{{ band(weather) }}{% endif %}
   {% for col in page %}
   <div class="region" style="left: {{ g.inside_col_x(loop.index0) }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.INSIDE_COL_W }}in; height: {{ g.INSIDE_H }}in">
-    {% for b in col %}<div class="placed" style="top: {{ b.top }}in">{{ m.block(b) }}</div>{% endfor %}
+    {% for b in col %}<div class="placed" style="top: {{ b.top }}in">{% if b.win %}<div class="win" style="height: {{ b.win.h }}in"><div style="margin-top: -{{ b.win.y0 }}in">{{ m.block(b) }}</div></div>{% else %}{{ m.block(b) }}{% endif %}</div>{% endfor %}
   </div>
   {% if not loop.first and col %}<div class="vrule" style="left: {{ g.inside_col_x(loop.index0) - g.GUTTER / 2 }}in; top: {{ g.INSIDE_Y + offset }}in; height: {{ g.INSIDE_H - offset }}in"></div>{% endif %}
   {% endfor %}
@@ -133,9 +136,9 @@
   <div class="region" style="left: {{ g.MARGIN_X }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.GOOD_W }}in; height: {{ g.BACK_TOP_H }}in">
   {% if good %}
     {{ m.good_header(good.head) }}
-    <div class="cols" style="column-count: 3; height: {{ good.text_h }}in">{% for t in good.paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>
   {% endif %}
   </div>
+  {% if good %}{{ flow_windows(good, m.story_flow) }}{% endif %}
   <div class="region side" style="left: {{ g.SIDE_X }}in; top: {{ g.INSIDE_Y }}in; width: {{ g.SIDE_W }}in; height: {{ g.BACK_TOP_H }}in">
     {% if otd %}<div class="label">On This Day</div><div class="otd ragged">{% for i in otd %}<p><b>{{ i.year }}</b> {{ i.text }}</p>{% endfor %}</div>{% endif %}
   </div>

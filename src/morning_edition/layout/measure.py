@@ -30,6 +30,55 @@ def heights(html: str) -> dict[str, float]:
     return out
 
 
+@dataclass
+class Measured:
+    height: float                                # inches
+    lines: list[tuple[float, float]]             # break units as (top, bottom) from the block's top, inches
+    para_ends: list[int]                         # indexes into lines of the last line of each paragraph
+
+
+def measure_blocks(html: str) -> dict[str, Measured]:
+    """Height of each data-measure block plus its break units.
+
+    A unit is one line box of a paragraph, or, when the block holds a list, one list item.
+    These are the places a column may end or begin: a window of the block that starts at a unit's
+    top and ends at a unit's bottom never cuts a line."""
+    from weasyprint.formatting_structure import boxes   # imported here: layout internals, see _walk
+
+    doc = render_document(html)
+    owners: dict[str, object] = {}
+    for _, element, box in _walk(doc):
+        key = element.get("data-measure")
+        if key and key not in owners:
+            owners[key] = box
+    out: dict[str, Measured] = {}
+    for key, owner in owners.items():
+        top = owner.border_box_y()
+        lines: list[tuple[float, float]] = []
+        owner_of_line: list[int] = []
+        items: list[tuple[float, float]] = []
+        seen_items: set[int] = set()
+        for box in owner.descendants(placeholders=True):
+            element = getattr(box, "element", None)
+            if element is None:
+                continue
+            if element.tag == "p" and isinstance(box, boxes.LineBox):
+                target = lines
+                owner_of_line.append(id(element))
+            elif element.tag == "li" and isinstance(box, boxes.BlockBox) and id(element) not in seen_items:
+                seen_items.add(id(element))
+                target = items
+            else:
+                continue
+            target.append((box.position_y - top, box.position_y - top + box.height))
+        units = items or lines
+        ends = [] if items else [i for i, pid in enumerate(owner_of_line)
+                                 if i + 1 == len(owner_of_line) or owner_of_line[i + 1] != pid]
+        out[key] = Measured(owner.margin_height() / PX_PER_IN,
+                            [(round(t / PX_PER_IN, 5), round(b / PX_PER_IN, 5)) for t, b in units], ends)
+    return out
+
+
 def widths(html: str) -> dict[str, float]:
     """Width in inches of each element with a data-measure-width attribute (its first box)."""
     out: dict[str, float] = {}

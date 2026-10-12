@@ -1,10 +1,8 @@
 {% macro lead_header(p) %}<div class="lead-header"><h1 class="headline lead-headline" style="font-size: {{ p.size }}pt">{{ p.headline }}</h1>{% if p.deck %}<div class="deck">{{ p.deck }}</div>{% endif %}<div class="byline">{{ p.section }} &middot; Condensed from {{ p.source }}</div></div>{% endmacro %}
 
-{% macro lead_first(text) %}<p class="first"><span class="dc">{{ text[0] }}</span>{{ text[1:] }}</p>{% endmacro %}
+{% macro lead_flow(paras) %}<div class="narrow">{% for t in paras %}{% if loop.first %}<p class="first"><span class="dc">{{ t[0] }}</span>{{ t[1:] }}</p>{% else %}<p>{{ t }}</p>{% endif %}{% endfor %}</div>{% endmacro %}
 
-{% macro para(text) %}<p class="first">{{ text }}</p>{% endmacro %}
-
-{% macro para_ragged(text) %}<p class="first">{{ text }}</p>{% endmacro %}
+{% macro story_flow(paras) %}<div class="narrow">{% for t in paras %}<p{% if loop.first %} class="first"{% endif %}>{{ t }}</p>{% endfor %}</div>{% endmacro %}
 
 {% macro story_header(p) %}<div class="story-header"><div class="kicker">{{ p.section }}</div><h2 class="headline story-headline">{{ p.headline }}</h2>{% if p.deck %}<div class="deck-small">{{ p.deck }}</div>{% endif %}<div class="byline">Condensed from {{ p.source }}</div></div>{% endmacro %}
 
@@ -17,6 +15,8 @@
 {% macro brief(p) %}<article class="piece brief">{{ brief_head(p) }}{% for t in p.paragraphs %}<p class="first">{{ t }}</p>{% endfor %}<div class="src">{{ p.source }}</div></article>{% endmacro %}
 
 {% macro also(items) %}<article class="piece also"><div class="kicker">Also in the news</div><ul>{% for i in items %}<li>{{ i.title }} <span class="src-inline">{{ i.source }}</span></li>{% endfor %}</ul></article>{% endmacro %}
+
+{% macro also_side(items) %}<div class="piece also"><div class="label">Also in the news</div><ul>{% for i in items %}<li>{{ i.title }} <span class="src-inline">{{ i.source }}</span></li>{% endfor %}</ul></div>{% endmacro %}
 
 {% macro block(b) %}{% if b.type == "also" %}{{ also(b["items"]) }}{% elif b.type == "brief" %}{{ brief(b.piece) }}{% else %}{{ story(b.piece) }}{% endif %}{% endmacro %}
 

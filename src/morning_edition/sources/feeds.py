@@ -41,6 +41,40 @@ def _summary(raw: str) -> str:
     return clean_text(strip_boilerplate(clean_text(raw, 10_000)))
 
 
+# Feed titles that name the section of a site rather than the publication.
+_GENERIC_TITLES = {"home", "homepage", "news", "rss", "feed", "latest", "latest news", "front page"}
+# " - All content", ": Latest", " | All Stories" and the like, tacked onto the end of a feed's own title
+_TITLE_SUFFIX = re.compile(
+    r"(?:\s+[-\u2013]\s+|\s*[|:]\s*)"
+    r"(?:all\s+(?:content|stories|articles|posts|news|items)|latest(?:\s+(?:news|stories|articles|posts))?)\s*$", re.I)
+
+
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").lower().removeprefix("www.")
+
+
+def feed_source(raw_title: str, url: str) -> str:
+    """The name to print for a feed: its own title without an 'All content' style suffix, or the
+    site's host when that title is empty or only names a section ("Homepage")."""
+    title = _TITLE_SUFFIX.sub("", clean_text(raw_title, 80)).strip()
+    return _host(url) if not title or title.lower() in _GENERIC_TITLES else title
+
+
+def _google_item(entry, title: str) -> tuple[str, str]:
+    """Google News headlines read 'Headline - Publisher'. The publisher is the entry's own source,
+    or else the last ' - ' suffix; the feed's title is just the search query, so it is never used."""
+    publisher = clean_text((entry.get("source") or {}).get("title", ""), 80)
+    if publisher:
+        suffix = f" - {publisher}"
+        if title.endswith(suffix) and title[: -len(suffix)].strip():
+            title = title[: -len(suffix)].rstrip()
+        return title, publisher
+    head, sep, tail = title.rpartition(" - ")
+    if sep and head.strip() and tail.strip():
+        return head.strip(), tail.strip()
+    return title, "Google News"
+
+
 @dataclass
 class GatherResult:
     items: list[FeedItem]
@@ -63,7 +97,8 @@ def parse_feed(content: bytes, feed: Feed, now: datetime, window: timedelta) -> 
     parsed = feedparser.parse(content)
     if not parsed.entries and (parsed.bozo or not parsed.get("version")):
         raise ValueError(f"not a feed ({parsed.get('bozo_exception', 'no entries')})")
-    source = clean_text(parsed.feed.get("title", ""), 80) or urlsplit(feed.url).netloc
+    source = feed_source(parsed.feed.get("title", ""), feed.url)
+    google = is_google_news(feed.url)
     items: list[FeedItem] = []
     for entry in parsed.entries:
         link = entry.get("link")
@@ -74,10 +109,13 @@ def parse_feed(content: bytes, feed: Feed, now: datetime, window: timedelta) -> 
         published = datetime(*stamp[:6], tzinfo=timezone.utc) if stamp else None
         if published is not None and now - published > window:
             continue
+        item_source = source
+        if google:
+            title, item_source = _google_item(entry, title)
         items.append(FeedItem(
             id=0, feed_id=feed.id, section=feed.section, title=title, url=link,
             key=normalize_url(link), summary=_summary(entry.get("summary", "")),
-            published=published, source=source, headlines_only=feed.headlines_only,
+            published=published, source=item_source, headlines_only=feed.headlines_only,
         ))
     return items
 

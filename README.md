@@ -1,6 +1,6 @@
 # Morning Edition
 
-Morning Edition is a self-hosted personal newspaper, written with Claude and printed every morning. Each edition combines your calendar, favorite feeds, and news stories curated by Claude into a few pages printed on both sides, always an even number of pages. A typical month of daily editions costs about $6.50 with Claude Sonnet 5.5 (the default) or about $13 with Claude Opus 5.5, depending on which Claude model you choose.
+Morning Edition is a self-hosted personal newspaper, written with Claude and printed every morning. Each edition combines your calendar, favorite feeds, and news stories curated by Claude into a few pages printed on both sides, always an even number of pages. A typical month of daily editions costs about $8 with Claude Sonnet 5.5 (the default) or about $16 with Claude Opus 5.5, depending on which Claude model you choose.
 
 ## Requirements
 

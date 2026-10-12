@@ -156,3 +156,72 @@ def test_strip_boilerplate_only_acts_at_sentence_starts():
     assert feeds.strip_boilerplate("The post Only appeared first on Example Local News.") == ""
     assert feeds.strip_boilerplate("Registration is open. Read more...") == "Registration is open."
     assert feeds.strip_boilerplate("Registration is open [\u2026] Continue reading") == "Registration is open"
+
+
+def rss(title, *items):
+    body = "".join(f"<item><title>{t}</title><link>{link}</link>{extra}</item>" for t, link, extra in items)
+    return f'<?xml version="1.0"?><rss version="2.0"><channel><title>{title}</title>{body}</channel></rss>'.encode()
+
+
+def source_of(feed_title, url="https://www.example.com/feed"):
+    items = feeds.parse_feed(rss(feed_title, ("Story", "https://example.com/s", "")), feed(url=url), NOW, timedelta(hours=24))
+    return items[0].source
+
+
+def test_google_news_uses_the_entry_source_and_strips_it_from_the_headline():
+    content = rss('&quot;new york&quot; when:1d - Google News',
+                  ("Tree program expands - Example Times", "https://news.google.com/rss/articles/a",
+                   '<source url="https://www.example.com">Example Times</source>'),
+                  ("Harbor traps leave the bay - Sample Journal", "https://news.google.com/rss/articles/b",
+                   '<source url="https://journal.example.org">Sample Journal</source>'))
+    items = feeds.parse_feed(content, feed(url="https://news.google.com/rss/search?q=news"), NOW, timedelta(hours=24))
+    assert [(i.title, i.source) for i in items] == [
+        ("Tree program expands", "Example Times"), ("Harbor traps leave the bay", "Sample Journal")]
+    assert all("Google" not in i.source and "new york" not in i.source for i in items)
+
+
+def test_google_news_falls_back_to_the_last_dash_suffix_of_the_title():
+    content = rss("q - Google News",
+                  ("Council votes 5-4 on seawall - The City - Gazette", "https://news.google.com/rss/articles/c", ""),
+                  ("Source mentioned elsewhere - Sample News", "https://news.google.com/rss/articles/d",
+                   '<source url="https://news.example.net">Different Name</source>'))
+    items = feeds.parse_feed(content, feed(url="https://news.google.com/rss/search?q=x"), NOW, timedelta(hours=24))
+    assert (items[0].title, items[0].source) == ("Council votes 5-4 on seawall - The City", "Gazette")
+    # the entry's own source wins; a title that does not end with it is left alone
+    assert (items[1].title, items[1].source) == ("Source mentioned elsewhere - Sample News", "Different Name")
+
+
+def test_google_news_item_with_no_publisher_never_shows_the_feed_title():
+    content = rss('"new york" when:1d - Google News', ("A headline with no dash", "https://news.google.com/rss/articles/e", ""))
+    (item,) = feeds.parse_feed(content, feed(url="https://news.google.com/rss/search?q=x"), NOW, timedelta(hours=24))
+    assert item.title == "A headline with no dash"
+    assert "new york" not in item.source and item.source == "Google News"
+
+
+def test_only_google_news_feeds_have_their_headline_suffix_stripped():
+    content = rss("Example Local", ("Tree program expands - Example Times", "https://example.com/t", ""))
+    (item,) = feeds.parse_feed(content, feed(), NOW, timedelta(hours=24))
+    assert item.title == "Tree program expands - Example Times" and item.source == "Example Local"
+
+
+def test_generic_feed_titles_fall_back_to_the_site_host():
+    for title in ("Home", "Homepage", "HOMEPAGE", "  News ", "RSS", "Feed", "Latest", "Latest News", "front page", "Front Page"):
+        assert source_of(title) == "example.com", title
+    assert source_of("Homepage", url="https://news.example.org:8080/rss.xml") == "news.example.org"
+    assert source_of("Homepage", url="https://WWW.Example.com/feed") == "example.com"
+    assert source_of("") == "example.com"
+
+
+def test_real_titles_that_merely_contain_a_generic_word_are_kept():
+    assert source_of("Home Improvement Weekly") == "Home Improvement Weekly"
+    assert source_of("Evening News Digest") == "Evening News Digest"
+
+
+def test_all_content_style_suffixes_are_stripped_from_feed_titles():
+    cases = {"Ars Technica - All content": "Ars Technica", "BBC News - All Stories": "BBC News",
+             "The Verge | All Posts": "The Verge", "Example: Latest": "Example", "Wired - all articles": "Wired",
+             "Example Gazette – Latest News": "Example Gazette", "Ars Technica - ALL CONTENT": "Ars Technica"}
+    for raw, expected in cases.items():
+        assert source_of(raw) == expected, raw
+    assert source_of("Home - All content") == "example.com"          # nothing left but a generic name
+    assert source_of("All Stories") == "All Stories"                  # no separator, so not a suffix

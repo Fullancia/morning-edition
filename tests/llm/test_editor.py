@@ -174,3 +174,41 @@ def test_fallback_selection_never_sets_a_section():
     sel = editor.fallback_selection(ITEMS, ["Local", "World", "Tech"])
     assert all(p.section is None for p in sel.primary + sel.reserves)
     assert [p.id for p in sel.primary] == [2, 3, 5]
+
+
+def test_stories_are_asked_for_at_the_fuller_lengths():
+    assert editor.WORDS == {"lead": 600, "story": 400, "brief": 200, "good_news": 350}
+    assert "about 400 words" in editor.SELECT_SYSTEM and "about 200 words" in editor.SELECT_SYSTEM
+    assert "250 words" not in editor.SELECT_SYSTEM and "150 words" not in editor.SELECT_SYSTEM
+
+
+def test_condense_asks_for_the_length_of_the_kind():
+    item = FeedItem(id=1, feed_id=1, section="World", title="T", url="https://example.com/1", key="https://example.com/1",
+                    summary="", published=None, source="Example", headlines_only=False)
+    asked = []
+
+    class Fake:
+        def ask_json(self, system, user, schema, **kw):
+            asked.append(user)
+            return editor.Condensed(headline="H", deck="D", paragraphs=["One."])
+
+    for kind, words in (("lead", 600), ("story", 400), ("brief", 200), ("good_news", 350)):
+        editor.condense(Fake(), item, "Some article text.", kind)
+        assert f"of about {words} words" in asked[-1]
+
+
+def test_select_prompt_asks_for_the_reserves_and_for_a_light_day_to_fill_the_pages():
+    llm = FakeLLM({"lead_id": 1, "good_news_id": None, "primary": [], "reserves": [], "also": []})
+    editor.select(llm, ITEMS, ["Local", "World", "Tech"], "", 2, 4)
+    user = llm.calls[0][1]
+    assert "Give 6 reserves" in user and "fewer only if there are not enough good candidates" in user
+    assert "up to 6 reserves" not in user
+    assert "light news day should still fill the normal day's 2 pages" in user
+    assert "about 3 stories, or 2 stories plus 2 or 3 briefs" in user and "about 400 words" in user
+    assert "plus 6 briefs" not in user
+
+
+def test_select_prompt_scales_the_reserves_with_the_pages():
+    llm = FakeLLM({"lead_id": 1, "good_news_id": None, "primary": [], "reserves": [], "also": []})
+    editor.select(llm, ITEMS, ["Local"], "", 4, 6)
+    assert "Give 12 reserves" in llm.calls[0][1] and "normal day's 4 pages" in llm.calls[0][1]

@@ -20,10 +20,10 @@ NOW = datetime(2026, 10, 12, 9, 10, tzinfo=timezone.utc)
 ARTICLE = (Path(__file__).parent / "fixtures" / "article.html").read_text()
 
 
-def rss(prefix, n, section_title):
+def rss(prefix, n, section_title, teaser="Teaser {i}."):
     items = "".join(
         f"<item><title>{section_title} story {i}</title><link>https://news.example.com/{prefix}/{i}</link>"
-        f"<description>Teaser {i}.</description><pubDate>Mon, 12 Oct 2026 0{i % 9}:00:00 GMT</pubDate></item>"
+        f"<description>{teaser.format(i=i)}</description><pubDate>Mon, 12 Oct 2026 0{i % 9}:00:00 GMT</pubDate></item>"
         for i in range(n))
     return f'<?xml version="1.0"?><rss version="2.0"><channel><title>{section_title} Wire</title>{items}</channel></rss>'
 
@@ -85,10 +85,12 @@ def services(printer=None, llm=True):
                              printer=printer or FakePrinter(), now=lambda: NOW, rng=random.Random(5))
 
 
-def mock_world(respx_mock, feeds_alive=True):
+def mock_world(respx_mock, feeds_alive=True, teaser="Teaser {i}."):
     if feeds_alive:
-        respx_mock.get("https://feeds.example.com/local").mock(return_value=httpx.Response(200, text=rss("l", 8, "Local")))
-        respx_mock.get("https://feeds.example.com/world").mock(return_value=httpx.Response(200, text=rss("w", 8, "World")))
+        respx_mock.get("https://feeds.example.com/local").mock(
+            return_value=httpx.Response(200, text=rss("l", 8, "Local", teaser)))
+        respx_mock.get("https://feeds.example.com/world").mock(
+            return_value=httpx.Response(200, text=rss("w", 8, "World", teaser)))
     else:
         respx_mock.get("https://feeds.example.com/local").mock(side_effect=httpx.ConnectTimeout("down"))
         respx_mock.get("https://feeds.example.com/world").mock(return_value=httpx.Response(500))
@@ -525,7 +527,8 @@ def test_every_edition_lists_its_pieces_in_print_order_with_original_urls(setup)
 
 @respx.mock
 def test_placed_json_lists_the_also_in_the_news_headlines(setup):
-    mock_world(respx.mock)
+    # teasers long enough to fill the inside pages, so a page of them is worth printing and the headlines get a gap
+    mock_world(respx.mock, teaser="Teaser {i}. " + "The council said the work would begin in the spring. " * 14)
     respx.mock.get("https://feeds.example.com/news").mock(return_value=httpx.Response(200, text=rss("n", 3, "Wire")))
     db_path, data_dir = setup
     conn = db.connect(db_path)

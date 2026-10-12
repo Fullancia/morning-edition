@@ -8,7 +8,7 @@ from ..settings import GOOD_NEWS
 from ..textutil import no_em_dash
 from .client import LLM, LLMError
 
-WORDS = {"lead": 450, "story": 250, "brief": 150, "good_news": 350}
+WORDS = {"lead": 600, "story": 400, "brief": 200, "good_news": 350}
 
 
 class Pick(BaseModel):
@@ -53,7 +53,7 @@ A good local story beats a national one. Reject product pitches, health or medic
 sponsored content, and listicles dressed up as good news. It may come from any section. Use null if \
 nothing qualifies.
 - primary: the stories today's news warrants, ranked best first, each with a length of "story" \
-(about 250 words) or "brief" (about 150 words). Never include the lead or the Good News pick.
+(about 400 words) or "brief" (about 200 words). Never include the lead or the Good News pick.
 - reserves: more good stories, ranked, to use only if there is room on the page.
 - also: ids of headlines_only items worth listing as a one-line headline.
 - Leave out sponsored posts, advertisements, real estate listings, event promotions, and \
@@ -148,10 +148,12 @@ def select(llm: LLM | None, items: list[FeedItem], sections: list[str], interest
         f"Reader's home: {home or 'not set'}\n"
         f"Reader's interests: {interests or 'general news'}\n"
         f"Sections in page order: {', '.join(sections)}\n"
-        f"Space: a normal day fills {inside_pages} inside pages, which holds about "
-        f"{3 * inside_pages} stories plus {3 * inside_pages} briefs. A heavy news day may use up to "
-        f"{max_inside_pages} inside pages. Size the primary list to what today's news warrants, "
-        f"and give up to {3 * inside_pages} reserves.\n\n"
+        f"Space: a normal day fills {inside_pages} inside pages. With stories of about 400 words, a page "
+        f"holds about 3 stories, or 2 stories plus 2 or 3 briefs. A heavy news day may use up to "
+        f"{max_inside_pages} inside pages. Size the primary list to what today's news warrants, but a "
+        f"light news day should still fill the normal day's {inside_pages} pages: reach for the next-best "
+        f"candidates rather than leaving pages empty. "
+        f"Give {3 * inside_pages} reserves (fewer only if there are not enough good candidates left).\n\n"
         f"Candidates:\n{json.dumps(candidates, ensure_ascii=False)}"
     )
     try:

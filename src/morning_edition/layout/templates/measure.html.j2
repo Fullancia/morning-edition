@@ -6,6 +6,6 @@
 <style>@page { size: 8.5in 400in; margin: 0; }</style>
 </head><body>
 {% for key, width, macro, payload in items %}
-<div class="{{ 'ragged' if macro in ('brief', 'para_ragged') else '' }}" data-measure="{{ key }}" style="width: {{ width }}in">{{ m[macro](payload) }}</div>
+<div class="{{ 'ragged' if macro in ('brief', 'also_side') else '' }}" data-measure="{{ key }}" style="width: {{ width }}in">{{ m[macro](payload) }}</div>
 {% endfor %}
 </body></html>

@@ -49,9 +49,20 @@ def base(tmp_path):
 
 
 def assert_fold_clear(html):
+    """Nothing important crosses the fold. The one exception is an inside-page headline left where it
+    started because pushing it below the fold would have left a hole over half an inch tall."""
     doc = render_document(html)
+    pieces = extents(doc, {"piece"})
     for e in extents(doc, FOLD_CLASSES):
-        assert not (e.top < g.FOLD < e.bottom), f"{e.cls} '{e.text}' crosses the fold on page {e.page + 1}"
+        if not (e.top < g.FOLD < e.bottom):
+            continue
+        inside = 0 < e.page < len(doc.pages) - 1
+        if e.cls == "headline" and inside:
+            owner = max((p for p in pieces if p.page == e.page and abs(p.left - e.left) < 0.5 and p.top <= e.top + 0.01
+                         and e.bottom <= p.bottom + 0.01), key=lambda p: p.top, default=None)
+            if owner is not None and g.FOLD + 0.06 - owner.top > 0.5 - 0.01:
+                continue
+        raise AssertionError(f"{e.cls} '{e.text}' crosses the fold on page {e.page + 1}")
     return doc
 
 
@@ -165,7 +176,8 @@ def test_render_result_reports_the_also_items_that_were_placed(base):
     from morning_edition.models import FeedItem
     also = [FeedItem(id=i, feed_id=1, section="Local", title=f"Item {i}", url=f"https://e.com/{i}", key=f"k{i}",
                      summary="", published=None, source="Gazette", headlines_only=True) for i in range(3)]
-    r = renderer.render_edition(dataclasses.replace(base, also=also))
+    # fewer stories and no reserves, so the pages have gaps left for the headlines
+    r = renderer.render_edition(dataclasses.replace(base, also=also, reserves=[], primary=base.primary[:9]))
     assert [i.title for i in r.also] == ["Item 0", "Item 1", "Item 2"]
     assert renderer.render_edition(base).also == []
 
@@ -239,7 +251,12 @@ def test_weather_band_pushes_page_two_columns_below_it(base):
     doc = render_document(r.html)
     band = next(e for e in extents(doc, {"weather-band"}))
     placed = [e for e in extents(doc, {"piece", "also"}) if e.page == 1]
-    assert placed and all(e.top >= band.bottom - 0.01 for e in placed)
+    wins = [e for e in extents(doc, {"win"}) if e.page == 1]
+    assert placed and all(w.top >= band.bottom - 0.01 for w in wins)
+    for e in placed:
+        # a piece starts below the band, or it is the shifted layout behind a window that does
+        assert e.top >= band.bottom - 0.01 or any(
+            abs(w.left - e.left) < 0.01 and e.top <= w.top and w.bottom <= e.bottom + 0.01 for w in wins), e
     rules = [e for e in extents(doc, {"vrule"}) if e.page == 1]
     assert rules and all(e.top >= band.bottom - 0.01 for e in rules)
 
@@ -549,7 +566,7 @@ def test_band_details_are_in_the_approved_order(base):
     assert moon_text.bottom <= days.top + 0.005, "the moon text runs into the forecast rule"
 
 
-BOTTOM_CLASSES = {"ragged", "cols", "brief", "story-header", "vrule"}
+BOTTOM_CLASSES = {"ragged", "col-win", "brief", "story-header", "vrule"}
 
 
 def strip_input(base, **over):
@@ -566,7 +583,7 @@ def test_index_strip_sits_below_every_bottom_region_on_page_one(base):
     (strip,) = [e for e in extents(doc, {"index-strip"}) if e.page == 0]
     assert abs(strip.top - g.INDEX_STRIP_Y) < 0.01 and abs((strip.bottom - strip.top) - g.INDEX_STRIP_H) < 0.01
     bottom = [e for e in extents(doc, BOTTOM_CLASSES) if e.page == 0 and e.top > g.FOLD]
-    assert {e.cls for e in bottom} >= {"ragged", "cols", "brief", "story-header"}
+    assert {e.cls for e in bottom} >= {"ragged", "col-win", "brief", "story-header"}
     assert all(e.bottom <= strip.top + 0.001 for e in bottom)
     regions = [e for e in bottom if e.cls in {"ragged", "vrule"}]
     assert regions and all(e.bottom <= g.FRONT_BOTTOM_Y + g.front_bottom_h(True) + 0.001 for e in regions)
@@ -584,7 +601,7 @@ def test_index_strip_lists_every_entry_in_order_on_one_line(base):
     assert [e.text.upper() for e in items][0] == "INSIDE"
     names = [" ".join(e.text.split()[:-1]) for e in items[1:]]
     assert names == SECTIONS + ["Good News", "Sudoku"]
-    assert "<b>Good News</b> 6" in r.html and "<b>Sudoku</b> 6" in r.html
+    assert f"<b>Good News</b> {r.pages}" in r.html and f"<b>Sudoku</b> {r.pages}" in r.html
     for name in SECTIONS:
         assert f"<b>{name}</b> " in r.html
 
@@ -624,14 +641,17 @@ def test_a_short_index_keeps_the_full_strip_font(base):
 
 
 def test_no_index_means_no_strip_and_full_height_bottom_regions(base):
-    quiet = dataclasses.replace(base, good_news=None, primary=[], reserves=[], puzzle=None, lead=piece(1, "lead", n=14))
+    quiet = dataclasses.replace(base, good_news=None, primary=[], reserves=[], puzzle=None, lead=piece(1, "lead", n=40))
     settings = base.settings.model_copy(update={"target_sheets": 1, "max_sheets": 1})
     r = renderer.render_edition(dataclasses.replace(quiet, settings=settings))
     doc = render_document(r.html)
     assert "index-strip" not in r.html.split("</style>")[1]
     assert not extents(doc, {"index-strip"})
-    (cont,) = [e for e in extents(doc, {"ragged"}) if e.page == 0 and e.top > g.FOLD]
-    assert abs(cont.bottom - (g.PAGE_H - g.MARGIN_Y)) < 0.01
+    cols = [e for e in extents(doc, {"col-win"}) if e.page == 0]
+    foot = g.PAGE_H - g.MARGIN_Y
+    assert cols and all(e.bottom <= foot + 0.01 for e in cols)
+    assert max(e.bottom for e in cols) > foot - 2 * g.LINE         # the lead runs to the foot of the page
+    assert abs(g.front_bottom_h(False) - (foot - g.FRONT_BOTTOM_Y)) < 1e-9
 
 
 def _events(prefix, n, start=540):
@@ -716,3 +736,453 @@ def test_tomorrow_never_displaces_todays_events_in_the_full_page(base):
     assert_fold_clear(with_t.html)
     n = lambda html: len(re.findall(r"Today entry number", _side_html(html)))
     assert n(with_t.html) == n(without.html) == 6
+
+
+# ---- windowed columns: the front page lead and second story, and split stories inside ----
+
+def clipped_lines(doc, window_classes=("win", "col-win")):
+    """Text lines cut by the edge of the window they sit in: a line box that straddles the window's top
+    or bottom, so that its upper or lower part is hidden."""
+    from weasyprint.formatting_structure import boxes
+    from morning_edition.layout.measure import PX_PER_IN, _walk
+    bad = []
+    for page, element, w in _walk(doc):
+        if not set((element.get("class") or "").split()) & set(window_classes):
+            continue
+        wt, wb = w.border_box_y() / PX_PER_IN, (w.border_box_y() + w.border_height()) / PX_PER_IN
+        for box in w.descendants(placeholders=True):
+            if not isinstance(box, boxes.LineBox) or getattr(box, "element", None) is None or box.element.tag != "p":
+                continue
+            top, bottom = box.position_y / PX_PER_IN, (box.position_y + box.height) / PX_PER_IN
+            inside = top >= wt - 0.002 and bottom <= wb + 0.002
+            outside = bottom <= wt + 0.002 or top >= wb - 0.002
+            if not inside and not outside:
+                bad.append((page, round(top, 3), round(bottom, 3), round(wt, 3), round(wb, 3)))
+    return bad
+
+
+def lead_input(base, tmp_path, n=14, photo=True, **over):
+    src = tmp_path / "lead.jpg"
+    Image.new("RGB", (1200, 800), (120, 120, 120)).save(src)
+    return dataclasses.replace(base, lead=piece(1, "lead", n=n), lead_image=src if photo else None, **over)
+
+
+def front_wins(doc, cls="col-win"):
+    return sorted((e for e in extents(doc, {cls}) if e.page == 0), key=lambda e: (round(e.left, 2), e.top))
+
+
+def test_front_text_columns_are_three_equal_columns_of_the_lead_width(base, tmp_path):
+    doc = assert_fold_clear(renderer.render_edition(lead_input(base, tmp_path)).html)
+    wins = front_wins(doc)
+    lefts = sorted({round(e.left, 2) for e in wins})
+    assert lefts == [round(g.lead_col_x(i), 2) for i in range(3)]
+    assert all(abs((e.right - e.left) - g.LEAD_COL_W) < 0.01 for e in wins)
+    assert abs(g.LEAD_COL_W - 1.783) < 0.01 and g.lead_col_x(2) + g.LEAD_COL_W <= g.SIDE_X - g.REGION_GAP + 0.01
+
+
+def test_the_photo_spans_columns_two_and_three_with_column_one_starting_at_its_top(base, tmp_path):
+    r = renderer.render_edition(lead_input(base, tmp_path))
+    doc = assert_fold_clear(r.html)
+    (photo,) = [e for e in extents(doc, {"photo"}) if e.page == 0]
+    assert abs(photo.left - g.lead_col_x(1)) < 0.02
+    assert abs((photo.right - photo.left) - (2 * g.LEAD_COL_W + g.GUTTER)) < 0.02
+    assert g.PHOTO_MIN_H <= photo.bottom - photo.top <= g.PHOTO_MAX_H + 0.01 and photo.bottom - photo.top > 1.5
+    wins = front_wins(doc)
+    first = [e for e in wins if abs(e.left - g.lead_col_x(0)) < 0.01 and e.top < g.FOLD][0]
+    assert abs(first.top - photo.top) < 0.02                      # column one starts beside the photo's top
+    (box,) = [e for e in extents(doc, {"photo-box"}) if e.page == 0]
+    for i in (1, 2):
+        col = [e for e in wins if abs(e.left - g.lead_col_x(i)) < 0.01 and e.top < g.FOLD][0]
+        assert col.top >= box.bottom - 0.01                      # text in two and three starts below photo and caption
+        assert abs((col.top - first.top) / g.LINE - round((col.top - first.top) / g.LINE)) < 0.02   # on the line grid
+    assert "Photo: Example Gazette" in r.html
+
+
+def test_without_a_photo_three_text_columns_start_together_under_the_headline(base, tmp_path):
+    doc = render_document(renderer.render_edition(lead_input(base, tmp_path, photo=False)).html)
+    wins = [e for e in front_wins(doc) if e.top < g.FOLD]
+    assert len(wins) == 3 and len({round(e.top, 2) for e in wins}) == 1
+    head = [e for e in extents(doc, {"lead-header"}) if e.page == 0][0]
+    assert wins[0].top >= head.bottom - 0.01
+    assert not extents(doc, {"photo"})
+
+
+def test_the_lead_flows_past_the_fold_in_the_same_columns_with_no_continued_label(base, tmp_path):
+    r = renderer.render_edition(lead_input(base, tmp_path, n=30))
+    doc = render_document(r.html)
+    assert "Continued from above" not in r.html
+    wins = front_wins(doc)
+    lead_cols = [e for e in wins if e.top < g.FOLD]
+    assert len(lead_cols) == 3 and all(e.bottom > g.FOLD for e in lead_cols)
+    heads = [e for e in extents(doc, {"lead-headline"}) if e.page == 0]
+    assert heads and heads[0].bottom < g.FOLD
+
+
+@pytest.mark.parametrize("n,photo", [(3, True), (8, True), (14, True), (30, True), (5, False), (30, False)])
+def test_lead_columns_end_level_within_one_line_and_clear_the_second_story(base, tmp_path, n, photo):
+    r = renderer.render_edition(lead_input(base, tmp_path, n=n, photo=photo))
+    doc = assert_fold_clear(r.html)
+    lead_cols = [e for e in front_wins(doc) if e.top < g.FOLD]
+    nonempty = [e for e in lead_cols if e.bottom - e.top > 0.05]
+    bottoms = [e.bottom for e in nonempty]
+    if len(nonempty) == 3:
+        assert max(bottoms) - min(bottoms) <= g.LINE + 0.02, bottoms
+    assert clipped_lines(doc) == []
+    heads = [e for e in extents(doc, {"story-header"}) if e.page == 0]
+    assert heads and heads[0].top >= max(e.bottom for e in lead_cols) - 0.01
+
+
+def test_second_story_sits_below_the_lead_across_the_lead_width_in_three_balanced_columns(base, tmp_path):
+    r = renderer.render_edition(lead_input(base, tmp_path, n=30))
+    doc = assert_fold_clear(r.html)
+    (head,) = [e for e in extents(doc, {"story-header"}) if e.page == 0]
+    assert abs(head.left - g.MARGIN_X) < 0.01 and abs((head.right - head.left) - g.LEAD_W) < 0.01
+    cols = [e for e in front_wins(doc) if e.top >= head.bottom - 0.01]
+    assert len(cols) == 3 and abs((cols[0].right - cols[0].left) - g.LEAD_COL_W) < 0.01
+    assert len({round(e.top, 2) for e in cols}) == 1
+    assert max(e.bottom for e in cols) - min(e.bottom for e in cols) <= g.LINE + 0.02
+    strip = [e for e in extents(doc, {"index-strip"}) if e.page == 0][0]
+    assert all(e.bottom <= strip.top + 0.001 for e in cols)
+    assert head.top >= max(e.bottom for e in front_wins(doc) if e.top < head.top) - 0.01   # nothing overlaps the lead
+
+
+def test_the_lead_is_capped_so_the_second_story_keeps_at_least_1_point_8_inches(base, tmp_path):
+    long_lead = lead_input(base, tmp_path, n=60)
+    front = renderer._fit_front(long_lead.lead, long_lead.lead_image, tmp_path, 1.0, base.primary[0],
+                                g.front_bottom_h(True))
+    assert front["story2"] is not None
+    y_bot = g.FRONT_BOTTOM_Y + g.front_bottom_h(True)
+    assert y_bot - front["story2"]["head_y"] >= g.STORY2_MIN_H - 1e-6
+    assert front["story2"]["cols"] and all(c["y"] + c["h"] <= y_bot + 1e-6 for c in front["story2"]["cols"])
+    lead_bottom = max(c["y"] + c["h"] for c in front["lead"]["cols"])
+    assert lead_bottom <= front["story2"]["head_y"] - g.REGION_GAP + 0.01
+
+
+def test_second_story_moves_inside_when_the_lead_would_leave_it_too_little(base, tmp_path, monkeypatch):
+    monkeypatch.setattr(g, "STORY2_MIN_H", 9.0)
+    inp = lead_input(base, tmp_path, n=60)
+    r = renderer.render_edition(inp)
+    doc = render_document(r.html)
+    assert not [e for e in extents(doc, {"story-header"}) if e.page == 0]       # no second story on the front
+    first_story = inp.primary[0]
+    assert first_story.key in {p.key for p in r.placed} or first_story.key in r.dropped
+    lead_cols = [e for e in front_wins(doc) if e.top < g.FOLD]
+    strip = [e for e in extents(doc, {"index-strip"}) if e.page == 0][0]
+    assert max(e.bottom for e in lead_cols) > g.FOLD + 2.0                      # the lead runs on, down to the strip
+    assert max(e.bottom for e in lead_cols) <= strip.top + 0.001
+
+
+@pytest.mark.parametrize("n", range(1, 16))
+def test_the_second_story_head_never_straddles_the_fold_at_any_lead_length(base, tmp_path, n):
+    inp = lead_input(base, tmp_path, n=n)
+    front = renderer._fit_front(inp.lead, inp.lead_image, tmp_path, 1.0, base.primary[0], g.front_bottom_h(True))
+    s2 = front["story2"]
+    if s2:
+        assert not (s2["head_y"] < g.FOLD < s2["head_y"] + s2["head_h"]), (n, s2["head_y"], s2["head_h"])
+
+
+def test_front_windows_tile_each_story_with_no_line_lost_or_repeated(base, tmp_path):
+    inp = lead_input(base, tmp_path, n=30)
+    front = renderer._fit_front(inp.lead, inp.lead_image, tmp_path, 1.0, base.primary[0], g.front_bottom_h(True))
+    for story in (front["lead"], front["story2"]):
+        cols = story["cols"]
+        measured = renderer._measure_flow(story["paras"], "lead_flow" if story is front["lead"] else "story_flow")
+        tops = [round(t, 3) for t, _ in measured.lines]
+        bottoms = [round(b, 3) for _, b in measured.lines]
+        assert round(cols[0]["y0"], 3) == 0.0
+        for a, b in zip(cols, cols[1:]):
+            assert abs((a["y0"] + a["h"]) - b["y0"]) < 0.002, "a window does not resume where the last one stopped"
+        for c in cols:
+            assert any(abs(c["y0"] - t) < 0.002 for t in tops), "window starts mid-line"
+            assert any(abs(c["y0"] + c["h"] - b) < 0.002 for b in bottoms), "window ends mid-line"
+
+
+def test_columns_narrower_than_two_inches_are_flush_left_and_wider_ones_stay_justified(base, tmp_path):
+    css = (renderer.TEMPLATES / "edition.css").read_text()
+    assert ".narrow p { text-align: left; hyphens: manual; }" in css
+    assert "p { text-align: justify; hyphens: auto; text-indent: 1em; }" in css
+    assert g.LEAD_COL_W < 2.0 and g.GOOD_COL_W < 2.0 and g.INSIDE_COL_W > 2.0
+    r = renderer.render_edition(lead_input(base, tmp_path, n=14))
+    front = r.html.split('<section class="page">')[1]
+    assert front.count('class="narrow"') >= 6                     # lead and second story, three windows each
+    inside = r.html.split('<section class="page">')[2]
+    assert 'class="narrow"' not in inside                         # inside columns stay justified
+    assert r.html.count('class="narrow"') >= 9                   # and so do the good news columns on the back
+    doc = render_document(r.html)
+    assert "text-indent" not in css.split(".narrow p")[1].split("\n")[0]       # paragraphs keep their indent
+    assert '<span class="dc">' in front                            # the drop cap stays
+
+
+def test_no_front_briefs_means_no_briefs_column(base, tmp_path):
+    inp = lead_input(base, tmp_path, primary=[p for p in base.primary if p.kind != "brief"])
+    assert "Briefs" not in renderer.render_edition(inp).html
+
+
+def test_front_briefs_still_get_their_column_beside_the_lead_and_second_story(base, tmp_path):
+    r = renderer.render_edition(lead_input(base, tmp_path, n=30))
+    doc = assert_fold_clear(r.html)
+    assert "Briefs" in r.html
+    (briefs,) = [e for e in extents(doc, {"rule-left"}) if e.page == 0]
+    assert abs(briefs.left - g.BRIEFS_X) < 0.01 and abs(briefs.right - (g.MARGIN_X + g.CONTENT_W)) < 0.01
+    assert all(e.right <= briefs.left for e in front_wins(doc))
+
+
+def test_quiet_day_front_still_lays_out_a_second_story(base, tmp_path):
+    inp = dataclasses.replace(base, lead=None, lead_image=None)
+    r = renderer.render_edition(inp)
+    doc = assert_fold_clear(r.html)
+    assert "A Quiet News Day" in r.html
+    heads = [e for e in extents(doc, {"story-header"}) if e.page == 0]
+    assert heads and heads[0].top >= g.FOLD
+    assert clipped_lines(doc) == []
+
+
+def test_inside_split_stories_never_cut_a_line_and_never_cross_a_page(base):
+    many = [piece(i, "story", SECTIONS[i % 3], n=9) for i in range(40, 52)]
+    inp = dataclasses.replace(base, primary=many[:9], reserves=[])
+    r = renderer.render_edition(inp)
+    doc = assert_fold_clear(r.html)
+    assert clipped_lines(doc) == []
+    wins = [e for e in extents(doc, {"win"})]
+    assert wins, "the long stories should have run from one column into the next"
+    # every continuation sits at the very top of its column
+    assert all(abs(e.top - g.INSIDE_Y) < 0.01 or e.page == 1 for e in wins if e.top < g.INSIDE_Y + 0.5)
+    for key in {p.key for p in many[:9]}:
+        pages_with = {i for i, page in enumerate(r.html.split('<section class="page">')[2:-1]) if key in page}
+        assert len(pages_with) <= 1, f"{key} appears on pages {pages_with}"
+
+
+def test_inside_windows_start_and_end_on_line_boundaries(base):
+    many = [piece(i, "story", SECTIONS[i % 3], n=8) for i in range(40, 46)]
+    view, placed, _ = renderer._inside(many, [], [], 4)
+    checked = 0
+    for page in view:
+        for col in page:
+            for b in col:
+                if "win" not in b:
+                    continue
+                m = renderer._measure_blocks([(b["key"], g.INSIDE_COL_W, "block", b)])[b["key"]].lines
+                y0, h = b["win"]["y0"], b["win"]["h"]
+                assert y0 == 0 or any(abs(y0 - t) < 0.002 for t, _ in m)
+                assert any(abs(y0 + h - bot) < 0.002 for _, bot in m) or abs(y0 + h - renderer._measure_blocks(
+                    [(b["key"], g.INSIDE_COL_W, "block", b)])[b["key"]].height) < 0.002
+                checked += 1
+    assert checked >= 2
+
+
+def test_every_split_story_keeps_three_lines_on_each_side(base):
+    many = [piece(i, "story", SECTIONS[i % 3], n=8) for i in range(40, 46)]
+    view, _, _ = renderer._inside(many, [], [], 4)
+    for page in view:
+        for col in page:
+            for b in col:
+                if "win" not in b:
+                    continue
+                m = renderer._measure_blocks([(b["key"], g.INSIDE_COL_W, "block", b)])[b["key"]].lines
+                y0, h = b["win"]["y0"], b["win"]["h"]
+                shown = [t for t, bot in m if t >= y0 - 0.002 and bot <= y0 + h + 0.002]
+                assert len(shown) >= 3, f"{b['key']} shows only {len(shown)} lines"
+
+
+def test_also_block_fills_a_gap_and_may_split_between_items(base):
+    from morning_edition.models import FeedItem
+    also = [FeedItem(id=i, feed_id=1, section="Local", title=f"Headline number {i} with several more words to wrap around",
+                     url=f"https://e.com/{i}", key=f"k{i}", summary="", published=None, source="Gazette",
+                     headlines_only=True) for i in range(9)]
+    pool = [piece(i, "story", "World", n=5) for i in range(40, 45)]
+    view, placed, _ = renderer._inside(pool, also, [], 4)
+    parts = [b for page in view for col in page for b in col if b["key"] == "also"]
+    assert len(parts) == 2 and "also" in placed          # it ran from the foot of one column into the next
+    units = renderer._measure_blocks([("also", g.INSIDE_COL_W, "block", parts[0])])["also"].lines
+    assert len(units) == 9
+    for part in parts:
+        if "win" in part:                          # a window begins and ends between items, never inside one
+            y0, h = part["win"]["y0"], part["win"]["h"]
+            assert y0 == 0 or any(abs(y0 - t) < 0.002 for t, _ in units)
+            assert any(abs(y0 + h - b) < 0.002 for _, b in units) or abs(y0 + h - units[-1][1]) < 0.01
+
+
+def test_a_story_cut_short_prints_only_its_kept_paragraphs_and_no_inside_column_is_left_empty():
+    pool = [piece(i, "story", "World", n=14) for i in range(40, 44)]
+    view, placed, dropped = renderer._inside(pool, [], [], 4)
+    pieces_by_key = {p.key: p for p in pool}
+    cut = [b for page in view for col in page for b in col
+           if len(b["piece"]["paragraphs"]) < len(pieces_by_key[b["key"]].paragraphs)]
+    assert cut, "a story too long for the space should have been cut at a paragraph end"
+    for b in cut:
+        original = pieces_by_key[b["key"]].paragraphs
+        assert 2 <= len(b["piece"]["paragraphs"]) < len(original)
+        assert b["piece"]["paragraphs"] == original[:len(b["piece"]["paragraphs"])]
+    for page in view[:-1]:                         # a page is full before the next begins
+        assert all(col for col in page)
+
+
+def test_a_cut_short_story_renders_whole_lines_inside_its_space(base):
+    long = [piece(i, "story", SECTIONS[i % 3], n=14) for i in range(40, 44)]
+    inp = dataclasses.replace(base, primary=long, reserves=[])
+    r = renderer.render_edition(inp)
+    doc = assert_fold_clear(r.html)
+    assert clipped_lines(doc) == []
+    cols = [e for e in extents(doc, {"placed"}) if e.page >= 1]
+    assert cols and all(e.bottom <= g.PAGE_H - g.MARGIN_Y + 0.01 or e.top < g.INSIDE_Y for e in cols)
+
+
+def test_good_news_is_poured_across_three_balanced_flush_left_columns(base):
+    r = renderer.render_edition(base)
+    doc = assert_fold_clear(r.html)
+    last = len(doc.pages) - 1
+    wins = sorted((e for e in extents(doc, {"col-win"}) if e.page == last), key=lambda e: e.left)
+    assert len(wins) == 3 and len({round(e.top, 2) for e in wins}) == 1
+    assert all(abs((e.right - e.left) - g.GOOD_COL_W) < 0.01 for e in wins)
+    assert max(e.bottom for e in wins) - min(e.bottom for e in wins) <= g.LINE + 0.02
+    assert all(e.bottom - e.top > 3 * g.LINE for e in wins)           # no column left nearly empty
+    assert clipped_lines(doc) == []
+    assert 'class="cols narrow"' not in r.html
+
+
+def test_a_long_good_news_story_is_trimmed_to_the_top_half_of_the_back_page(base):
+    r = renderer.render_edition(dataclasses.replace(base, good_news=piece(2, "good_news", "Good News", n=60)))
+    doc = assert_fold_clear(r.html)
+    last = len(doc.pages) - 1
+    wins = [e for e in extents(doc, {"col-win"}) if e.page == last]
+    assert len(wins) == 3 and all(e.bottom <= g.INSIDE_Y + g.BACK_TOP_H + 0.01 for e in wins)
+    assert max(e.bottom for e in wins) - min(e.bottom for e in wins) <= g.LINE + 0.02
+    assert clipped_lines(doc) == []
+
+
+# ---- the right-hand column below the fold: briefs, else the also headlines, else a wide second story ----
+
+def feed_items(n, prefix="Headline"):
+    from morning_edition.models import FeedItem
+    return [FeedItem(id=i, feed_id=1, section="Local", title=f"{prefix} number {i} on a local matter of some note",
+                     url=f"https://e.com/{i}", key=f"k{i}", summary="", published=None, source="Gazette",
+                     headlines_only=True) for i in range(n)]
+
+
+def no_briefs(base, tmp_path, **over):
+    return lead_input(base, tmp_path, n=30, primary=[p for p in base.primary if p.kind != "brief"], reserves=[], **over)
+
+
+def test_with_no_briefs_the_also_headlines_fill_the_right_hand_column_and_leave_the_inside_pages(base, tmp_path):
+    r = renderer.render_edition(no_briefs(base, tmp_path, also=feed_items(5)))
+    doc = assert_fold_clear(r.html)
+    (box,) = [e for e in extents(doc, {"rule-left"}) if e.page == 0]
+    assert abs(box.left - g.BRIEFS_X) < 0.01 and box.top >= g.FOLD and "Briefs" not in r.html
+    assert "Also in the news" in r.html.split('<section class="page">')[1]
+    strip = [e for e in extents(doc, {"index-strip"}) if e.page == 0][0]
+    assert box.bottom <= strip.top + 0.001
+    items = [e for e in extents(doc, {"also"}) if e.page == 0]
+    assert items and all(e.bottom <= strip.top + 0.001 for e in items)
+    assert [i.title for i in r.also] == [i.title for i in feed_items(5)]
+    for i in feed_items(5):
+        assert r.html.count(i.title) == 1                       # on the front only, not again inside
+    assert all(e.page == 0 for e in extents(doc, {"also"}))     # nothing named also anywhere else
+    assert all(e.right <= box.left + 0.01 for e in front_wins(doc))   # the stories stay left of it
+
+
+def test_headlines_that_do_not_fit_the_front_column_go_inside_by_item(base, tmp_path):
+    items = feed_items(30)
+    r = renderer.render_edition(no_briefs(base, tmp_path, also=items))
+    doc = render_document(r.html)
+    front = [e for e in extents(doc, {"also"}) if e.page == 0]
+    assert len(front) == 1                                       # one list on the front
+    on_front = len(re.findall(r"number \d+ on a local matter", r.html.split('<section class="page">')[1]))
+    assert 3 <= on_front < 30
+    assert on_front <= len(r.also) <= 30                         # the rest, if any room, ran inside by item
+    assert [i.title for i in r.also] == [i.title for i in items[:len(r.also)]]
+    assert not (set(i.title for i in r.also) - set(i.title for i in items))
+    assert len({i.title for i in r.also}) == len(r.also)         # no headline printed twice
+    assert clipped_lines(doc) == []
+
+
+def test_with_briefs_the_also_headlines_stay_inside(base, tmp_path):
+    r = renderer.render_edition(lead_input(base, tmp_path, n=30, also=feed_items(3), reserves=[]))
+    front = r.html.split('<section class="page">')[1]
+    assert "Briefs" in front and "number 0 on a local matter" not in front
+
+
+def test_with_neither_briefs_nor_headlines_the_second_story_spans_the_page_in_four_balanced_columns(base, tmp_path):
+    r = renderer.render_edition(no_briefs(base, tmp_path, also=[]))
+    doc = assert_fold_clear(r.html)
+    (head,) = [e for e in extents(doc, {"story-header"}) if e.page == 0]
+    assert abs(head.left - g.MARGIN_X) < 0.01 and abs((head.right - head.left) - g.CONTENT_W) < 0.01
+    assert head.top >= g.FOLD                                     # clear of the Your Day rail above the fold
+    cols = [e for e in front_wins(doc) if e.top >= head.bottom - 0.01]
+    assert len(cols) == 4 and len({round(e.top, 2) for e in cols}) == 1
+    assert all(abs((e.right - e.left) - g.WIDE_COL_W) < 0.01 for e in cols)
+    assert abs(g.WIDE_COL_W - 1.78) < 0.01 and g.WIDE_COL_W < 2.0
+    assert max(e.bottom for e in cols) - min(e.bottom for e in cols) <= g.LINE + 0.02
+    assert abs(cols[-1].right - (g.MARGIN_X + g.CONTENT_W)) < 0.01
+    strip = [e for e in extents(doc, {"index-strip"}) if e.page == 0][0]
+    assert all(e.bottom <= strip.top + 0.001 for e in cols) and clipped_lines(doc) == []
+    assert "Also in the news" not in r.html.split('<section class="page">')[1]
+
+
+def test_the_wide_second_story_never_sits_beside_the_rail(base, tmp_path):
+    for n in (2, 6, 30):
+        r = renderer.render_edition(lead_input(base, tmp_path, n=n, primary=[p for p in base.primary if p.kind != "brief"],
+                                               reserves=[]))
+        doc = render_document(r.html)
+        rail = [e for e in extents(doc, {"side"}) if e.page == 0][0]
+        (head,) = [e for e in extents(doc, {"story-header"}) if e.page == 0]
+        assert head.top >= rail.bottom - 0.01, n
+
+
+# ---- fold holes on inside pages ----
+
+def _heads(view, pool):
+    return renderer._measure([("head:" + p.key, g.INSIDE_COL_W, "block_head", renderer._block(p)) for p in pool])
+
+
+def _straddlers(view, heads):
+    """(page, column, piece, top) for each placed whole piece whose head is left across the fold."""
+    out = []
+    for pi, pg in enumerate(view):
+        for ci, col in enumerate(pg):
+            for b in col:
+                h = heads.get("head:" + b["key"])
+                if h and "win" not in b and b["top"] < g.INSIDE_FOLD_AT < b["top"] + h:
+                    out.append((pi, ci, b["key"], b["top"]))
+    return out
+
+
+def test_also_headlines_fill_a_fold_hole_and_the_head_goes_below_the_fold():
+    pool = [piece(i, "story", "World", n=4) for i in range(40, 46)]
+    view, placed, _ = renderer._inside(pool, feed_items(7), [], 4)
+    hits = [(col, bi) for pg in view for col in pg for bi, b in enumerate(col)
+            if b["key"] == "also" and bi + 1 < len(col) and b["top"] < g.INSIDE_FOLD_AT < col[bi + 1]["top"]]
+    assert hits, "the headlines should have taken the hole above a head pushed under the fold"
+    col, bi = hits[0]
+    assert col[bi + 1]["top"] >= g.INSIDE_FOLD_AT                   # the head starts below the fold
+    assert col[bi]["n_items"] >= 1 and col[bi]["win"]["y0"] == 0    # from the top of the list, kicker and whole items
+    placed_items = sum(b.get("n_items", 0) for pg in view for c in pg for b in c if b["key"] == "also")
+    assert 1 <= placed_items <= 7
+    # the filled hole no longer leaves its head straddling the fold
+    assert (col[bi + 1]["key"], col[bi + 1]["top"]) not in {(k, t) for _, _, k, t in _straddlers(view, _heads(view, pool))}
+
+
+def test_with_no_also_headlines_the_head_starts_where_it_is_across_the_fold():
+    pool = [piece(i, "story", "World", n=4) for i in range(40, 46)]
+    view, _, _ = renderer._inside(pool, [], [], 4)
+    heads = _heads(view, pool)
+    found = _straddlers(view, heads)
+    assert found and all(g.INSIDE_FOLD_AT + 0.06 - top > 0.5 for _, _, _, top in found)
+
+
+def test_a_small_fold_gap_is_still_closed_by_pushing_the_head_below_the_fold():
+    for n in (3, 4, 5, 6, 8):
+        for count in (4, 5, 6, 7):
+            pool = [piece(i, "story", "World", n=n) for i in range(40, 40 + count)]
+            view, _, _ = renderer._inside(pool, [], [], 4)
+            heads = _heads(view, pool)
+            for _, _, key, top in _straddlers(view, heads):
+                assert g.INSIDE_FOLD_AT + 0.06 - top > 0.5, (n, count, key, top)
+
+
+def test_the_also_count_in_the_result_matches_what_is_printed(base):
+    from morning_edition.models import FeedItem
+    items = feed_items(7)
+    r = renderer.render_edition(dataclasses.replace(base, also=items, reserves=[],
+                                                    primary=[p for p in base.primary if p.kind != "brief"][:6]))
+    printed = [i for i in items if r.html.count(i.title) >= 1]
+    assert [i.title for i in r.also] == [i.title for i in printed]
