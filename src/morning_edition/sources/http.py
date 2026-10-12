@@ -10,6 +10,8 @@ BACKOFF_SECONDS = (1, 2)
 MAX_BODY_BYTES = 2_000_000
 MAX_IMAGE_BYTES = 10_000_000
 
+BLOCKED_MESSAGE = "blocked non-public address"
+
 _sleep: Callable[[float], None] = time.sleep
 
 
@@ -87,7 +89,7 @@ class PublicOnlyTransport(httpx.HTTPTransport):
         except ValueError:
             addresses = resolve(host)
         if any(not is_public_address(a) for a in addresses):
-            raise httpx.ConnectError("blocked non-public address")
+            raise httpx.ConnectError(BLOCKED_MESSAGE)
         return super().handle_request(request)
 
 

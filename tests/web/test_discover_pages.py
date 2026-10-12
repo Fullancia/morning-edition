@@ -11,7 +11,7 @@ from morning_edition.config import AppConfig
 from morning_edition.llm.client import LLMError
 from morning_edition.pipeline import Services
 from morning_edition.sources import discover as discover_mod
-from morning_edition.sources.discover import DiscoveredFeed
+from morning_edition.sources.discover import DiscoveredFeed, DiscoveryResult, DiscoverySummary
 from morning_edition.sources.http import PublicOnlyTransport
 from morning_edition.web.app import create_app
 from .conftest import FakePrinter
@@ -42,6 +42,8 @@ def write_state(app, **state):
             "run_id": "run1", "finished_at": "2026-10-12T09:01:00+00:00", "error": None, "results": []}
     merged = {**base, **state}
     merged["results"] = [r.model_dump() for r in merged["results"]]
+    if isinstance(merged.get("summary"), DiscoverySummary):
+        merged["summary"] = merged["summary"].model_dump()
     (app.state.config.data_dir / "discovery.json").write_text(json.dumps(merged))
 
 
@@ -84,7 +86,7 @@ def test_search_runs_in_the_background_and_shows_progress_then_results(keyed, mo
         assert isinstance(http._transport, PublicOnlyTransport)
         calls.append((interests, home, sections, [f.url for f in existing_feeds]))
         gate.wait(10)
-        return [found()]
+        return DiscoveryResult(feeds=[found()])
 
     monkeypatch.setattr(discover_mod, "discover", fake_discover)
     conn = db.connect(app.state.db_path)
@@ -109,7 +111,7 @@ def test_search_runs_in_the_background_and_shows_progress_then_results(keyed, mo
 def test_a_second_post_while_running_starts_no_second_thread(keyed, monkeypatch):
     app, client = keyed
     gate, started = threading.Event(), []
-    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: (gate.wait(10), [])[1])
+    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: (gate.wait(10), DiscoveryResult())[1])
     real = app.state.start_thread
     app.state.start_thread = lambda *a: (started.append(a), real(*a))
     client.post("/feeds/discover")
@@ -238,7 +240,7 @@ def test_unicode_digits_never_crash_the_added_message_or_the_pick_list(keyed):
 
 def test_each_search_gets_a_random_run_id(keyed, monkeypatch):
     app, client = keyed
-    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: [found()])
+    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: DiscoveryResult(feeds=[found()]))
     ids = []
     for _ in range(2):
         client.post("/feeds/discover")
@@ -259,3 +261,59 @@ def test_adding_while_a_new_search_runs_says_so_and_adds_nothing(keyed):
     finally:
         app.state.discover_lock.release()
     assert db.list_feeds(db.connect(app.state.db_path)) == []
+
+
+MIXED = DiscoverySummary(proposed=18, checked=18, verified=0,
+                         rejected={"no_feed": 9, "stale": 6, "unreachable": 3})
+
+
+def test_the_search_stores_its_summary_next_to_the_results(keyed, monkeypatch):
+    app, client = keyed
+    summary = DiscoverySummary(proposed=4, checked=3, verified=1, rejected={"stale": 2})
+    monkeypatch.setattr(discover_mod, "discover", lambda *a, **k: DiscoveryResult(feeds=[found()], summary=summary))
+    client.post("/feeds/discover")
+    app.state.last_thread.join(timeout=10)
+    assert read_state(app)["summary"] == summary.model_dump()
+
+
+def test_zero_verified_shows_the_one_line_summary_instead_of_a_bare_message(keyed):
+    app, client = keyed
+    write_state(app, summary=MIXED)
+    text = client.get("/feeds/discover").text
+    assert ("Claude suggested 18 sources: 0 verified. 9 had no working feed, 6 posted nothing this week, "
+            "3 couldn't be reached.") in text.replace("&#39;", "'")
+    assert "<details" not in text and 'action="/feeds/discover"' in text
+
+
+def test_the_summary_line_also_shows_above_found_feeds(keyed):
+    app, client = keyed
+    summary = DiscoverySummary(proposed=5, checked=4, verified=1, rejected={"subscribed": 1, "blocked": 1,
+                                                                          "over_budget": 1})
+    write_state(app, results=[found()], summary=summary)
+    text = client.get("/feeds/discover").text
+    assert ("Claude suggested 5 sources, 4 checked: 1 verified. 1 you already have, 1 pointed at a blocked "
+            "address, 1 took too long.") in text
+
+
+def test_singular_counts_read_naturally(keyed):
+    app, client = keyed
+    write_state(app, summary=DiscoverySummary(proposed=1, checked=1, verified=0, rejected={"unreachable": 1}))
+    text = client.get("/feeds/discover").text.replace("&#39;", "'")
+    assert "Claude suggested 1 source: 0 verified. 1 couldn't be reached." in text
+
+
+def test_zero_candidates_says_so_and_shows_what_came_back_escaped(keyed):
+    app, client = keyed
+    write_state(app, summary=DiscoverySummary(proposed=0, notes_excerpt="I could not <b>find</b> anything & stopped."))
+    text = client.get("/feeds/discover").text
+    assert "Claude did not suggest any sources." in text
+    assert "<details>" in text and "<summary>" in text
+    assert "I could not &lt;b&gt;find&lt;/b&gt; anything &amp; stopped." in text
+    assert "<b>find</b>" not in text
+
+
+def test_a_state_saved_before_summaries_existed_still_renders(keyed):
+    app, client = keyed
+    write_state(app)
+    text = client.get("/feeds/discover").text
+    assert "No new feeds with stories from the last week turned up." in text and "Claude suggested" not in text

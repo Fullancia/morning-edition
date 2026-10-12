@@ -2,6 +2,7 @@
 import logging
 import math
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from datetime import datetime, timedelta, timezone
@@ -17,7 +18,7 @@ from ..llm.client import LLM
 from ..settings import GOOD_NEWS
 from . import feeds as feeds_mod
 from .articles import fetch_article
-from .http import MAX_BODY_BYTES, get_with_retry
+from .http import BLOCKED_MESSAGE, MAX_BODY_BYTES, get_with_retry
 
 log = logging.getLogger("morning_edition")
 
@@ -26,6 +27,14 @@ MAX_CANDIDATES = 25
 MAX_WORKERS = 8
 MAX_PROMPT_FEEDS = 100
 CANDIDATE_BUDGET = 45.0  # seconds a candidate gets, per wave of MAX_WORKERS, before it is given up on
+# why a candidate did not make the list
+NO_FEED = "no_feed"            # reachable, but no working feed turned up
+STALE = "stale"                # a working feed with nothing from the last week
+SUBSCRIBED = "subscribed"      # the reader already has it
+BLOCKED = "blocked"            # pointed at a local or otherwise non-public address
+UNREACHABLE = "unreachable"    # the site could not be fetched (down, timed out, too big) or checking it failed
+OVER_BUDGET = "over_budget"    # the check ran past its time budget
+DUPLICATE = "duplicate"        # a different outlet with the same feed
 COMMON_PATHS = ("/feed", "/feed/", "/rss", "/rss.xml", "/feed.xml", "/index.xml", "/atom.xml")
 FEED_TYPES = ("application/rss+xml", "application/atom+xml")
 
@@ -69,6 +78,20 @@ def candidate_list_model(valid: list[str]) -> type[CandidateList]:
     return create_model("CandidateList", __base__=CandidateList, candidates=(list[item], ...))
 
 
+class DiscoverySummary(BaseModel):
+    """What one search did, so an empty result can be explained."""
+    proposed: int = 0           # candidates Claude returned
+    checked: int = 0            # after dropping bad addresses and repeat hosts, and the cap
+    verified: int = 0
+    rejected: dict[str, int] = {}
+    notes_excerpt: str = ""     # the start of Claude's research text, kept only when it proposed nothing
+
+
+class DiscoveryResult(BaseModel):
+    feeds: list["DiscoveredFeed"] = []
+    summary: DiscoverySummary = DiscoverySummary()
+
+
 class DiscoveredFeed(BaseModel):
     name: str
     feed_url: str
@@ -78,6 +101,9 @@ class DiscoveredFeed(BaseModel):
     recent_count: int
     sample_titles: list[str]
     headlines_only: bool
+
+
+DiscoveryResult.model_rebuild()
 
 
 RESEARCH_SYSTEM = """You help one reader fill a personal printed newspaper by finding publications \
@@ -130,18 +156,28 @@ def _is_web_url(url: str) -> bool:
     return parts.scheme.lower() in ("http", "https") and bool(parts.netloc)
 
 
-def _get(client: httpx.Client, url: str) -> httpx.Response | None:
+class _Trace:
+    """What went wrong while looking for one candidate's feed, for the reason it gets turned down."""
+
+    def __init__(self) -> None:
+        self.blocked = False      # a fetch was refused because the address is not public
+        self.unreachable = False  # the homepage could not be fetched at all
+
+
+def _get(client: httpx.Client, url: str, trace: _Trace | None = None) -> httpx.Response | None:
     """The response, or None when the site can't be reached at all (or sent more than MAX_BODY_BYTES)."""
     try:
         return get_with_retry(client, url, headers={"User-Agent": feeds_mod.USER_AGENT}, timeout=15,
                               follow_redirects=True, max_bytes=MAX_BODY_BYTES)
-    except (httpx.HTTPError, httpx.InvalidURL):
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
+        if trace is not None and BLOCKED_MESSAGE in str(exc):
+            trace.blocked = True
         return None
 
 
-def _feed_bytes(client: httpx.Client, url: str) -> bytes | None:
+def _feed_bytes(client: httpx.Client, url: str, trace: _Trace | None = None) -> bytes | None:
     """The body at `url` when it parses as a feed, else None."""
-    resp = _get(client, url)
+    resp = _get(client, url, trace)
     if resp is None or resp.status_code >= 400:
         return None
     probe = Feed(id=0, url=url, section="", enabled=True, headlines_only=False)
@@ -152,16 +188,18 @@ def _feed_bytes(client: httpx.Client, url: str) -> bytes | None:
     return resp.content
 
 
-def _find(client: httpx.Client, candidate: Candidate) -> tuple[str, bytes] | None:
+def _find(client: httpx.Client, candidate: Candidate, trace: _Trace | None = None) -> tuple[str, bytes] | None:
     """The first feed URL that really parses as a feed, with its body."""
+    trace = trace or _Trace()
     if candidate.feed_url and _is_web_url(candidate.feed_url):
-        body = _feed_bytes(client, candidate.feed_url)
+        body = _feed_bytes(client, candidate.feed_url, trace)
         if body is not None:
             return candidate.feed_url, body
     if not _is_web_url(candidate.homepage):
         return None
-    home = _get(client, candidate.homepage)
+    home = _get(client, candidate.homepage, trace)
     if home is None:
+        trace.unreachable = True
         return None  # the site is unreachable; its common paths would only time out too
     tried: set[str] = set()
     guesses: list[str] = []
@@ -178,7 +216,7 @@ def _find(client: httpx.Client, candidate: Candidate) -> tuple[str, bytes] | Non
         if url in tried or not _is_web_url(url):
             continue
         tried.add(url)
-        body = _feed_bytes(client, url)
+        body = _feed_bytes(client, url, trace)
         if body is not None:
             return url, body
     return None
@@ -190,30 +228,32 @@ def find_feed_url(client: httpx.Client, candidate: Candidate) -> str | None:
 
 
 def verify(client: httpx.Client, candidate: Candidate, now: datetime,
-           existing_keys: set[str]) -> DiscoveredFeed | None:
-    """A candidate that has a working feed the reader doesn't have, with news from the last week."""
+           existing_keys: set[str]) -> tuple[DiscoveredFeed | None, str | None]:
+    """(feed, None) for a candidate with a working feed the reader doesn't have and news from the last
+    week; otherwise (None, why) with why one of the reason constants. Never raises."""
     try:
         if candidate.feed_url and feeds_mod.normalize_url(candidate.feed_url) in existing_keys:
-            return None
-        found = _find(client, candidate)
+            return None, SUBSCRIBED
+        trace = _Trace()
+        found = _find(client, candidate, trace)
         if found is None:
-            return None
+            return None, BLOCKED if trace.blocked else UNREACHABLE if trace.unreachable else NO_FEED
         feed_url, body = found
         if feeds_mod.normalize_url(feed_url) in existing_keys:
-            return None
+            return None, SUBSCRIBED
         probe = Feed(id=0, url=feed_url, section=candidate.section, enabled=True, headlines_only=False)
         items = [i for i in feeds_mod.parse_feed(body, probe, now, RECENT) if i.published is not None]
         if not items:
-            return None
+            return None, STALE
         items.sort(key=lambda i: i.published, reverse=True)
         headlines_only = feeds_mod.is_google_news(feed_url) or fetch_article(client, items[0].url) is None
         return DiscoveredFeed(
             name=candidate.name.strip(), feed_url=feed_url, homepage=candidate.homepage.strip(),
             section=candidate.section, reason=candidate.reason.strip(), recent_count=len(items),
-            sample_titles=[i.title for i in items[:3]], headlines_only=headlines_only)
+            sample_titles=[i.title for i in items[:3]], headlines_only=headlines_only), None
     except Exception as exc:  # noqa: BLE001 - one odd site must never sink the whole search
-        log.info("Feed discovery skipped %s: %s", candidate.homepage, type(exc).__name__)
-        return None
+        log.info("Feed discovery skipped %s: %s", urlsplit(candidate.homepage).hostname, type(exc).__name__)
+        return None, UNREACHABLE
 
 
 def _prompt_url(url: str) -> str:
@@ -227,7 +267,7 @@ def _host(url: str) -> str:
 
 
 def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections: list[str],
-             existing_feeds: list[Feed], now: datetime) -> list[DiscoveredFeed]:
+             existing_feeds: list[Feed], now: datetime) -> DiscoveryResult:
     """Raises LLMError when Claude can't research or structure the answer."""
     valid = [*sections, GOOD_NEWS]
     user = "\n".join([
@@ -256,30 +296,41 @@ def discover(llm: LLM, client: httpx.Client, interests: str, home: str, sections
     candidates = candidates[:MAX_CANDIDATES]
 
     existing_keys = {feeds_mod.normalize_url(f.url) for f in existing_feeds}
-    found = _verify_all(client, candidates, now, existing_keys)
+    found, rejected = _verify_all(client, candidates, now, existing_keys)
     order = {s: i for i, s in enumerate(valid)}
     found.sort(key=lambda v: (order[v.section], -v.recent_count))
     unique: dict[str, DiscoveredFeed] = {}
     for v in found:
-        unique.setdefault(feeds_mod.normalize_url(v.feed_url), v)  # two outlets can share one feed
-    return list(unique.values())
+        if feeds_mod.normalize_url(v.feed_url) in unique:
+            rejected[DUPLICATE] += 1  # two outlets can share one feed
+        else:
+            unique[feeds_mod.normalize_url(v.feed_url)] = v
+    summary = DiscoverySummary(
+        proposed=len(extracted.candidates), checked=len(candidates), verified=len(unique),
+        rejected=dict(rejected), notes_excerpt="" if extracted.candidates else notes.strip()[:300])
+    return DiscoveryResult(feeds=list(unique.values()), summary=summary)
 
 
 def _verify_all(client: httpx.Client, candidates: list[Candidate], now: datetime,
-                existing_keys: set[str]) -> list[DiscoveredFeed]:
-    """Verify concurrently; a host that stalls past its time budget is dropped instead of stalling the run."""
+                existing_keys: set[str]) -> tuple[list[DiscoveredFeed], Counter]:
+    """Verify concurrently; a host that stalls past its time budget is dropped instead of stalling the run.
+    Returns the verified feeds and a count of rejections by reason."""
     pool = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    rejected: Counter = Counter()
     try:
         futures = [pool.submit(verify, client, c, now, existing_keys) for c in candidates]
         deadline = time.monotonic() + CANDIDATE_BUDGET * math.ceil(len(candidates) / MAX_WORKERS)
         out: list[DiscoveredFeed] = []
         for future in futures:
             try:
-                result = future.result(timeout=max(0.0, deadline - time.monotonic()))
+                result, why = future.result(timeout=max(0.0, deadline - time.monotonic()))
             except FutureTimeout:
+                rejected[OVER_BUDGET] += 1
                 continue
             if result is not None:
                 out.append(result)
-        return out
+            else:
+                rejected[why or UNREACHABLE] += 1
+        return out, rejected
     finally:
         pool.shutdown(wait=False, cancel_futures=True)

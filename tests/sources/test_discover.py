@@ -102,8 +102,12 @@ def test_no_feed_anywhere_gives_none_and_a_dead_site_does_not_raise(web, client)
     assert discover.find_feed_url(client, cand(homepage="https://dead.example.com")) is None
 
 
-def verify(client, candidate, existing=frozenset()):
+def verdict(client, candidate, existing=frozenset()):
     return discover.verify(client, candidate, NOW, set(existing))
+
+
+def verify(client, candidate, existing=frozenset()):
+    return verdict(client, candidate, existing)[0]
 
 
 def test_verify_counts_recent_items_and_keeps_three_newest_titles(web, client):
@@ -159,7 +163,27 @@ def test_google_news_feeds_are_headlines_only_without_fetching_articles(web, cli
 def test_verify_never_raises(web, client, monkeypatch):
     web.get("https://example.com/feed").mock(return_value=xml(FRESH))
     monkeypatch.setattr(discover, "fetch_article", lambda *a: 1 / 0)
-    assert verify(client, cand()) is None
+    assert verdict(client, cand()) == (None, discover.UNREACHABLE)
+
+
+def test_verify_says_why_a_candidate_was_turned_down(web, client, public, monkeypatch):
+    from morning_edition.sources import http as http_mod
+    web.get("https://stale.example.com/feed").mock(return_value=xml(STALE))
+    web.get("https://dead.example.com/").mock(side_effect=httpx.ConnectError("down"))
+    web.get("https://slowfeed.example.com/").mock(side_effect=httpx.ReadTimeout("slow"))
+    web.get("https://have.example.com/feed").mock(return_value=xml(FRESH))
+    assert verdict(client, cand(homepage="https://stale.example.com")) == (None, discover.STALE)
+    assert verdict(client, cand(homepage="https://nothing.example.com")) == (None, discover.NO_FEED)
+    assert verdict(client, cand(homepage="https://dead.example.com")) == (None, discover.UNREACHABLE)
+    assert verdict(client, cand(homepage="https://slowfeed.example.com")) == (None, discover.UNREACHABLE)
+    have = {normalize_url("https://have.example.com/feed")}
+    assert verdict(client, cand(homepage="https://have.example.com"), have) == (None, discover.SUBSCRIBED)
+    monkeypatch.setattr(http_mod, "resolve", lambda host: ["93.184.216.34"])
+    assert verdict(public, cand(homepage="http://10.0.0.5")) == (None, discover.BLOCKED)
+    web.get("https://example.com/feed").mock(return_value=xml(FRESH))
+    web.get("https://example.com/a1").mock(return_value=html(ARTICLE))
+    found, why = verdict(public, cand())
+    assert isinstance(found, DiscoveredFeed) and why is None
 
 
 class FakeLLM:
@@ -178,9 +202,13 @@ class FakeLLM:
         return CandidateList(candidates=self.candidates)
 
 
-def run(llm, client, existing=(), sections=("Local", "World", "Tech")):
+def run_full(llm, client, existing=(), sections=("Local", "World", "Tech")):
     return discover.discover(llm, client, interests="sailing, jazz", home="Albany, NY",
                              sections=list(sections), existing_feeds=list(existing), now=NOW)
+
+
+def run(llm, client, existing=(), sections=("Local", "World", "Tech")):
+    return run_full(llm, client, existing, sections).feeds
 
 
 def test_discover_prompts_carry_the_reader_and_the_existing_feeds(web, client):
@@ -357,15 +385,59 @@ def test_a_stalled_candidate_is_dropped_without_stalling_the_run(web, client, mo
     def slow(client, candidate, now, existing_keys):
         if "slow" in candidate.homepage:
             release.wait(5)
-            return None
+            return None, None
         return real(client, candidate, now, existing_keys)
 
     monkeypatch.setattr(discover, "verify", slow)
     monkeypatch.setattr(discover, "CANDIDATE_BUDGET", 0.3)
     web.get("https://quick.example.com/feed").mock(return_value=xml(FRESH))
     try:
-        found = run(FakeLLM([cand("https://slow.example.com", name="Slow"),
-                             cand("https://quick.example.com", name="Quick")]), client)
+        result = run_full(FakeLLM([cand("https://slow.example.com", name="Slow"),
+                                   cand("https://quick.example.com", name="Quick")]), client)
     finally:
         release.set()
-    assert [f.name for f in found] == ["Quick"]
+    assert [f.name for f in result.feeds] == ["Quick"]
+    assert result.summary.rejected == {discover.OVER_BUDGET: 1}
+
+
+def test_the_summary_counts_every_stage_and_every_rejection_reason(web, public, monkeypatch):
+    from morning_edition.sources import http as http_mod
+    monkeypatch.setattr(http_mod, "resolve", lambda host: ["93.184.216.34"])
+    web.get("https://ok.example.com/feed").mock(return_value=xml(FRESH))
+    web.get("https://stale.example.com/feed").mock(return_value=xml(STALE))
+    web.get("https://have.example.com/feed").mock(return_value=xml(FRESH))
+    web.get("https://dead.example.com/").mock(side_effect=httpx.ConnectError("down"))
+    web.get("https://same1.example.com/rss").mock(return_value=xml(FRESH))
+    existing = [Feed(id=1, url="https://have.example.com/feed", section="Local", enabled=True, headlines_only=False)]
+    candidates = [
+        cand("https://ok.example.com", name="Ok"),
+        cand("https://stale.example.com", name="Stale", section="World"),
+        cand("https://nofeed.example.com", name="No feed", section="Tech"),
+        cand("https://nofeed2.example.com", name="No feed 2", section="Tech"),
+        cand("https://dead.example.com", name="Dead"),
+        cand("https://have.example.com", name="Have"),
+        cand("http://10.0.0.5", name="Inside"),
+        cand("https://same1.example.com", name="Same", feed_url="https://same1.example.com/rss"),
+        cand("https://same2.example.com", name="Same again", feed_url="https://same1.example.com/rss"),
+        cand("https://ok.example.com/second", name="Repeat host"),
+        cand("not a url", name="Garbage"),
+    ]
+    result = run_full(FakeLLM(candidates), public, existing)
+    assert [f.name for f in result.feeds] == ["Ok", "Same"]
+    s = result.summary
+    assert (s.proposed, s.checked, s.verified) == (11, 9, 2)
+    assert s.rejected == {discover.NO_FEED: 2, discover.STALE: 1, discover.UNREACHABLE: 1,
+                          discover.SUBSCRIBED: 1, discover.BLOCKED: 1, discover.DUPLICATE: 1}
+    assert s.notes_excerpt == ""
+
+
+def test_zero_candidates_keeps_the_start_of_the_research_text(web, client):
+    result = run_full(FakeLLM(), client)
+    assert result.feeds == [] and result.summary.proposed == 0
+    assert result.summary.notes_excerpt == "research notes"
+
+
+def test_the_notes_excerpt_is_capped_at_300_characters(web, client):
+    llm = FakeLLM()
+    llm.research = lambda system, user, **kw: "x" * 1000
+    assert len(run_full(llm, client).summary.notes_excerpt) == 300

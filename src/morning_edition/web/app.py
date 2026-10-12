@@ -385,7 +385,7 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
         done = state is not None and state["status"] == "done"
         return page(request, "discover.html", has_key=services.llm_factory(s) is not None, state=state, busy=bool(busy),
                     groups=discovery.group_by_section(state["results"], valid) if done else [],
-                    sections=valid)
+                    sections=valid, summary_line=discovery.summary_line(state["summary"]) if done else "")
 
     def run_discovery(llm, s: Settings, existing: list[db.Feed], started: str, run_id: str) -> None:
         """Background thread: search, verify, and save the outcome for the page to show."""
@@ -395,7 +395,8 @@ def create_app(config: AppConfig | None = None, services: pipeline.Services | No
             with public_client() as http:
                 found = discover_mod.discover(llm, http, s.interests, s.home.label or s.home.query,
                                               s.sections, existing, services.now())
-            discovery.save_state(data_dir, "done", started, run_id, services.now().isoformat(), results=found)
+            discovery.save_state(data_dir, "done", started, run_id, services.now().isoformat(),
+                                 results=found.feeds, summary=found.summary)
         except LLMError as exc:
             discovery.save_state(data_dir, "error", started, run_id, services.now().isoformat(),
                                  error=str(exc)[:300])

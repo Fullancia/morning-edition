@@ -13,6 +13,13 @@
 {% else %}
 {% if state and state.status == "error" %}<p class="error">{{ state.error }}</p>{% endif %}
 {% if state and state.status == "done" %}
+  {% if summary_line %}<p class="muted">{{ summary_line }}</p>{% endif %}
+  {% if state.summary and state.summary.proposed == 0 and state.summary.notes_excerpt %}
+  <details>
+    <summary>What Claude said</summary>
+    <p class="muted">{{ state.summary.notes_excerpt }}</p>
+  </details>
+  {% endif %}
   {% if groups %}
   <p class="muted">Found {{ state.results | length }} feed{{ "" if state.results | length == 1 else "s" }}. Every one was fetched and has stories from the last week. Pick the ones you want and change a section if it fits better elsewhere.</p>
   <form method="post" action="/feeds/discover/add" class="found">
@@ -42,7 +49,8 @@
     <button>Add selected feeds</button>
   </form>
   {% else %}
-  <p>No new feeds with stories from the last week turned up. Try again, or add more detail to "What you care about" in Settings.</p>
+  {% if summary_line %}<p>Try again, or add more detail to "What you care about" in Settings.</p>
+  {% else %}<p>No new feeds with stories from the last week turned up. Try again, or add more detail to "What you care about" in Settings.</p>{% endif %}
   {% endif %}
   <h2>Search again</h2>
   {{ search_button("Search again") }}
