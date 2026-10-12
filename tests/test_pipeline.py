@@ -287,6 +287,34 @@ def test_one_failing_calendar_does_not_lose_the_others(setup):
 
 
 @respx.mock
+def test_tomorrow_comes_from_the_same_fetch_and_reaches_the_front_page(setup):
+    mock_world(respx.mock)
+    db_path, data_dir = setup
+    a = "https://cal.example.com/a/TOKENA/basic.ics"
+    b = "https://cal.example.com/b/TOKENB/basic.ics"
+    set_calendars(db_path, ("Work", a), ("Family", b))
+
+    def two_days(uid, today_title, tomorrow_title, today_hhmm, tomorrow_hhmm):
+        body = ics(uid, today_title, today_hhmm).replace("END:VCALENDAR\n", "")
+        nxt = ics(uid + "x", tomorrow_title, tomorrow_hhmm).replace("20261012", "20261013")
+        return body + nxt.split("PRODID:-//test//EN\n", 1)[1]
+
+    route_a = respx.mock.get(a).mock(return_value=httpx.Response(
+        200, text=two_days("1", "Today zebra", "Tomorrow zebra", "130000", "150000")))
+    route_b = respx.mock.get(b).mock(return_value=httpx.Response(
+        200, text=two_days("2", "Today alpha", "Tomorrow alpha", "080000", "090000")))
+    eid = pipeline.build_edition(db_path, data_dir, services(), print_it=False)
+    assert route_a.call_count == 1 and route_b.call_count == 1       # one fetch per calendar
+    day = next(e for e in db.get_edition(db.connect(db_path), eid).log if e["step"] == "day")
+    assert day["status"] == "ok"
+    html = (data_dir / "editions" / "0001" / "edition.html").read_text()
+    side = html[html.index('class="region side"'):html.index('class="region rule-top"')]
+    assert side.index("Today alpha") < side.index("Today zebra") < side.index("Tomorrow</div>")
+    assert side.index("Tomorrow</div>") < side.index("Tomorrow alpha") < side.index("Tomorrow zebra")   # merged, sorted
+    assert "cal.example.com" not in html and "TOKEN" not in html
+
+
+@respx.mock
 def test_calendar_failure_leaves_weather_and_on_this_day_alone(setup):
     mock_world(respx.mock)
     db_path, data_dir = setup

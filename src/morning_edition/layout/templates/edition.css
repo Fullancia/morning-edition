@@ -51,6 +51,7 @@ img.photo { display: block; width: 2.35in; border: 0.5pt solid #000; }
 .cols { column-gap: 0.16in; column-rule: 0.5pt solid #000; column-fill: auto; }
 .side { border-left: 0.75pt solid #000; padding-left: 0.14in; }
 .side-block { margin-bottom: 10pt; }
+.sub-label { font-family: 'Libre Franklin'; font-weight: 500; font-size: 6.5pt; letter-spacing: 0.1em; text-transform: uppercase; margin: 6pt 0 3pt; }
 .cal-row { display: flex; gap: 6pt; margin-bottom: 4pt; font-family: 'Libre Franklin'; }
 .cal-time { font-weight: 700; font-size: 7pt; width: 0.55in; flex: none; padding-top: 1pt; }
 .cal-what { flex: 1; min-width: 0; font-family: 'Source Serif 4'; font-size: 9pt; line-height: 1.2; }

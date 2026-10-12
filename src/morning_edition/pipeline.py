@@ -5,7 +5,7 @@ from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -188,6 +188,7 @@ def _produce(conn, s: Settings, tz: ZoneInfo, now: datetime, day, ed, data_dir: 
 
     wx = None
     events = []
+    tomorrow_events = []
     otd = []
     with log.step("day") as st:
         home = s.home
@@ -200,11 +201,16 @@ def _produce(conn, s: Settings, tz: ZoneInfo, now: datetime, day, ed, data_dir: 
                 st.warnings.append(f"weather: {detail}")
         for cal in s.calendars:
             try:
-                events += calendar.events_for_day(calendar.fetch_ical(services.http, cal.url), day, tz)
+                text = calendar.fetch_ical(services.http, cal.url)   # one fetch serves both days
+                today_here = calendar.events_for_day(text, day, tz)
+                tomorrow_here = calendar.events_for_day(text, day + timedelta(days=1), tz)
+                events += today_here
+                tomorrow_events += tomorrow_here
             except Exception:  # noqa: BLE001 - httpx.InvalidURL and parser errors are not HTTPError/ValueError
                 # name only, never the exception text: it can contain the private calendar URL
                 st.warnings.append(f'calendar "{cal.name}": could not load')
         events.sort(key=lambda e: (e.sort_minute, e.title))
+        tomorrow_events.sort(key=lambda e: (e.sort_minute, e.title))
         try:
             otd = onthisday.fetch_on_this_day(services.http, day)
         except Exception:  # noqa: BLE001
@@ -242,6 +248,7 @@ def _produce(conn, s: Settings, tz: ZoneInfo, now: datetime, day, ed, data_dir: 
     with log.step("layout") as st:
         inp = renderer.EditionInput(
             settings=s, day=day, number=ed.number, work_dir=work, weather=wx, events=events,
+            tomorrow_events=tomorrow_events,
             on_this_day=otd, lead=lead, lead_image=lead_image, good_news=good, primary=primary,
             reserves=reserves, also=[by_id[i] for i in sel.also if i in by_id],
             puzzle=puzzle, answers=answers)

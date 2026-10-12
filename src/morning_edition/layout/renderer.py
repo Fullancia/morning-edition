@@ -63,6 +63,7 @@ class EditionInput:
     also: list[FeedItem]
     puzzle: PuzzleView | None
     answers: dict | None
+    tomorrow_events: list[Event] = field(default_factory=list)
 
 
 @dataclass
@@ -179,16 +180,21 @@ def _fit_front_briefs(briefs: list[Piece], bottom_h: float = g.FRONT_BOTTOM_H) -
     return [p for i, p in enumerate(briefs) if i in chosen]
 
 
-def _fit_side(events: list[Event], weather: Weather | None) -> dict:
-    """Trim the front-page sidebar until it fits: outlook days first, then events."""
+def _fit_side(events: list[Event], weather: Weather | None, tomorrow: list[Event] | None = None) -> dict:
+    """Trim the front-page sidebar until it fits: tomorrow's events first, then outlook days, then today's."""
+    tomorrow = tomorrow or []
     outlook = list(weather.outlook[:MAX_OUTLOOK]) if weather else []
     n_events = min(len(events), MAX_EVENTS)
+    n_tomorrow = min(len(tomorrow), MAX_EVENTS)
     while True:
         side = {"events": events[:n_events], "more": len(events) - n_events,
+                "tomorrow": tomorrow[:n_tomorrow], "tomorrow_more": len(tomorrow) - n_tomorrow if n_tomorrow else 0,
                 "outlook": outlook, "deg": _deg(weather)}
         if _measure([("side", g.SIDE_W - 0.15, "side", side)])["side"] <= g.FRONT_TOP_H - 0.02:
             return side
-        if outlook:
+        if n_tomorrow:
+            n_tomorrow -= 1
+        elif outlook:
             outlook = outlook[:-1]
         elif n_events > 1:
             n_events -= 1
@@ -324,7 +330,7 @@ def render_edition(inp: EditionInput) -> RenderResult:
         nameplate_size=_nameplate_size(s, g.CONTENT_W - 2 * g.EAR_W - 2 * g.NAMEPLATE_GAP),
         ear_temp=ear_temp, ear_temp_size=ear_temp_size,
         date_label=_date_label(inp.day), number=inp.number, weather=inp.weather, deg=_deg(inp.weather),
-        side=_fit_side(inp.events, inp.weather),
+        side=_fit_side(inp.events, inp.weather, inp.tomorrow_events),
         bottom_h=plan["bottom_h"], index=index, index_size=index_size,
         lead=lead_view, story2=story2, front_briefs=[_pd(p) for p in front_briefs],
         inside_pages=inside_pages,

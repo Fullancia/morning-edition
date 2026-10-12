@@ -632,3 +632,87 @@ def test_no_index_means_no_strip_and_full_height_bottom_regions(base):
     assert not extents(doc, {"index-strip"})
     (cont,) = [e for e in extents(doc, {"ragged"}) if e.page == 0 and e.top > g.FOLD]
     assert abs(cont.bottom - (g.PAGE_H - g.MARGIN_Y)) < 0.01
+
+
+def _events(prefix, n, start=540):
+    return [Event(label=f"{9 + i}:00 am", title=f"{prefix} entry number {i}", all_day=False, sort_minute=start + i)
+            for i in range(n)]
+
+
+def _side_html(html):
+    return html[html.index('class="region side"'):html.index('class="region rule-top"')]
+
+
+def _wx():
+    return Weather(current_temp=58, today=forecast(12), wind="Wind NW 8 mph",
+                   outlook=[forecast(13), forecast(14), forecast(15)])
+
+
+def test_sidebar_shows_tomorrow_block_when_there_is_room(base):
+    r = renderer.render_edition(dataclasses.replace(
+        base, weather=_wx(), events=_events("Today", 2), tomorrow_events=_events("Morrow", 2)))
+    doc = assert_fold_clear(r.html)
+    side = _side_html(r.html)
+    assert side.index("Your Day") < side.index("Today entry number 1") < side.index("Tomorrow") \
+        < side.index("Morrow entry number 0") < side.index("Outlook")
+    assert len([e for e in extents(doc, {"cal-row"}) if e.page == 0]) == 4
+    assert len([e for e in extents(doc, {"outlook-row"}) if e.page == 0]) == 3
+    assert "more tomorrow" not in r.html
+
+
+def test_no_tomorrow_heading_when_tomorrow_is_empty(base):
+    r = renderer.render_edition(dataclasses.replace(base, events=_events("Today", 2), tomorrow_events=[]))
+    assert "Tomorrow" not in _side_html(r.html)
+
+
+def test_empty_today_still_says_nothing_then_lists_tomorrow(base):
+    r = renderer.render_edition(dataclasses.replace(base, events=[], tomorrow_events=_events("Morrow", 1)))
+    side = _side_html(r.html)
+    assert side.index("Nothing on the calendar.") < side.index("Tomorrow") < side.index("Morrow entry number 0")
+
+
+def test_with_many_events_tomorrow_trims_first_and_says_how_many_more(base):
+    r = renderer.render_edition(dataclasses.replace(
+        base, weather=_wx(), events=_events("Today", 4), tomorrow_events=_events("Morrow", 7)))
+    doc = assert_fold_clear(r.html)
+    side = _side_html(r.html)
+    assert all(f"Today entry number {i}" in side for i in range(4))          # today's events all stay
+    assert len([e for e in extents(doc, {"outlook-row"}) if e.page == 0]) == 3   # and so does the outlook
+    shown = len(re.findall(r"Morrow entry number", side))
+    assert 0 < shown < 7
+    assert f"and {7 - shown} more tomorrow" in side
+
+
+def test_tomorrow_disappears_whole_when_none_of_it_fits_with_no_dangling_heading(base):
+    r = renderer.render_edition(dataclasses.replace(
+        base, weather=_wx(), events=_events("Today", 7), tomorrow_events=_events("Morrow", 3)))
+    assert_fold_clear(r.html)
+    side = _side_html(r.html)
+    assert "Tomorrow" not in side and "Morrow entry" not in side and "more tomorrow" not in side
+    assert all(f"Today entry number {i}" in side for i in range(7))
+
+
+def test_fit_side_trims_tomorrow_then_outlook_then_todays_events():
+    wx, today = _wx(), _events("Today", 7)
+    base_side = renderer._fit_side(today, wx, [])
+    assert len(base_side["outlook"]) < 3 and len(base_side["events"]) == 7      # 7 today already costs an outlook day
+    with_t = renderer._fit_side(today, wx, _events("Morrow", 7))
+    assert with_t["tomorrow"] == [] and with_t["tomorrow_more"] == 0
+    assert with_t["outlook"] == base_side["outlook"] and with_t["events"] == base_side["events"]
+    tight = renderer._fit_side(_events("Today", 4), wx, _events("Morrow", 7))
+    assert len(tight["outlook"]) == 3 and len(tight["events"]) == 4 and 0 < len(tight["tomorrow"]) < 7
+    long_titled = [Event(label="9:00 am", title=f"Calendar entry number {i} with a long wrapping title",
+                         all_day=False, sort_minute=540 + i) for i in range(9)]
+    crowded = renderer._fit_side(long_titled, wx, _events("Morrow", 7))
+    assert crowded["tomorrow"] == [] and crowded["outlook"] == [] and 0 < len(crowded["events"]) < 9
+    assert crowded["more"] == 9 - len(crowded["events"])
+    assert crowded["events"] == renderer._fit_side(long_titled, wx, [])["events"]
+
+
+def test_tomorrow_never_displaces_todays_events_in_the_full_page(base):
+    kw = dict(weather=_wx(), events=_events("Today", 6))
+    without = renderer.render_edition(dataclasses.replace(base, **kw))
+    with_t = renderer.render_edition(dataclasses.replace(base, tomorrow_events=_events("Morrow", 6), **kw))
+    assert_fold_clear(with_t.html)
+    n = lambda html: len(re.findall(r"Today entry number", _side_html(html)))
+    assert n(with_t.html) == n(without.html) == 6

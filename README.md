@@ -55,7 +55,7 @@ To print your calendar on the first page, get your calendar's private iCal link:
 3. Under "Integrate calendar," copy the secret address in iCal format (the URL starting with `https://calendar.google.com/calendar/ical/`)
 4. In the Dashboard, open Settings, find the Calendars section, give the calendar a name, paste the link, and choose Add calendar
 
-Repeat for as many calendars as you like (work, family, a boat club). Events from all of them are merged into one "Your Day" list on the front page, sorted with all-day events first, then by time. The dashboard lists each calendar by name and says "link saved"; it never shows the link again. Use Remove to delete one. If one calendar fails to load, the others still print and the edition log notes which one failed (by name only).
+Repeat for as many calendars as you like (work, family, a boat club). Events from all of them are merged into one "Your Day" list on the front page, sorted with all-day events first, then by time. The dashboard lists each calendar by name and says "link saved"; it never shows the link again. Use Remove to delete one. The block also lists tomorrow's events under a small "Tomorrow" heading when there is room; if space runs short, tomorrow's events are the first thing trimmed ("and N more tomorrow"), then the outlook days, then today's events. If one calendar fails to load, the others still print and the edition log notes which one failed (by name only).
 
 Warning: anyone with this link can read your calendar. Keep it private and regenerate it if you share your device.
 
