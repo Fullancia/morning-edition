@@ -56,8 +56,10 @@ def test_lines_give_each_body_line_box_as_offsets_from_the_block_top():
     assert len(story) >= 5
     assert abs(story[0][0] - 3 * 24 / 72) < 0.01           # three 24pt head lines come first; the head is not a unit
     assert all(abs((b - t) - 12 / 72) < 0.005 for t, b in story)
-    assert all(abs(story[i + 1][0] - story[i][1]) < 0.005 for i in range(len(story) - 2))   # lines are contiguous in a paragraph
-    assert story[-1][0] - story[-2][1] > 2 / 72            # the paragraph margin shows up between paragraphs
+    gaps = [story[i + 1][0] - story[i][1] for i in range(len(story) - 1)]
+    # lines touch inside a paragraph; the one paragraph break shows its 3pt margin (wrapping varies by font)
+    assert all(abs(gap) < 0.005 or abs(gap - 3 / 72) < 0.005 for gap in gaps)
+    assert sum(abs(gap - 3 / 72) < 0.005 for gap in gaps) == 1
     assert abs(hs["story"] - story[-1][1]) < 0.01     # the last margin collapses out of the block
 
 
